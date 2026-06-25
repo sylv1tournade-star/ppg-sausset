@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { formatParisShortDate } from "@/lib/calendar";
+import { useEffect, useMemo, useState } from "react";
+import { formatMonthYear, formatParisShortDate, parseMonthKey } from "@/lib/calendar";
 import type { Attendance, BureauStats, PaidMember, Season, Session } from "@/lib/types";
 
 type ParticipantRow = {
@@ -9,6 +9,8 @@ type ParticipantRow = {
   firstName: string;
   lastName: string;
 };
+
+type AddableParticipantRow = ParticipantRow;
 
 export default function AdminPage() {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -20,11 +22,22 @@ export default function AdminPage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [addableParticipants, setAddableParticipants] = useState<AddableParticipantRow[]>([]);
+  const [attendanceSearch, setAttendanceSearch] = useState("");
   const [startYear, setStartYear] = useState(new Date().getFullYear());
   const [busy, setBusy] = useState(false);
   const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
   const [importRaw, setImportRaw] = useState("");
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
+  const [exportingMonth, setExportingMonth] = useState<string | null>(null);
+
+  const seasonMonthKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const session of sessions) {
+      keys.add(session.sessionDate.slice(0, 7));
+    }
+    return Array.from(keys).sort();
+  }, [sessions]);
 
   async function refreshAdmin() {
     const ping = await fetch("/api/admin?action=ping");
@@ -115,10 +128,12 @@ export default function AdminPage() {
 
   async function openAttendance(sessionId: string) {
     setSelectedSessionId(sessionId);
+    setAttendanceSearch("");
     const response = await fetch(`/api/admin?sessionId=${sessionId}`);
     const data = await response.json();
     setParticipants(data.participants ?? []);
     setAttendance(data.attendance ?? []);
+    setAddableParticipants(data.addable ?? []);
   }
 
   async function markAttendance(participantId: string, status: Attendance["status"]) {
@@ -138,6 +153,46 @@ export default function AdminPage() {
     const data = await response.json();
     if (response.ok) {
       setAttendance(data.attendance ?? []);
+    }
+  }
+
+  async function markAllPresent() {
+    if (!selectedSessionId || participants.length === 0) {
+      return;
+    }
+    const response = await fetch("/api/admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "attendance.markAll",
+        sessionId: selectedSessionId,
+        status: "present",
+      }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      setAttendance(data.attendance ?? []);
+    }
+  }
+
+  async function addParticipantToSession(participantId: string) {
+    if (!selectedSessionId) {
+      return;
+    }
+    const response = await fetch("/api/admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "attendance.add",
+        sessionId: selectedSessionId,
+        participantId,
+      }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      setParticipants(data.participants ?? []);
+      setAttendance(data.attendance ?? []);
+      setAddableParticipants(data.addable ?? []);
     }
   }
 
@@ -180,6 +235,30 @@ export default function AdminPage() {
     }
   }
 
+  async function downloadMonthPdf(monthKey: string) {
+    const { year, month } = parseMonthKey(monthKey);
+    setExportingMonth(monthKey);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/export-month?year=${year}&month=${month + 1}`);
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        throw new Error(data.error ?? "Impossible de générer le PDF.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ppg-inscriptions-${monthKey}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : "Erreur");
+    } finally {
+      setExportingMonth(null);
+    }
+  }
+
   if (!isAdmin) {
     return (
       <div className="container max-w-md">
@@ -202,6 +281,14 @@ export default function AdminPage() {
   }
 
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
+  const attendanceQuery = attendanceSearch.trim().toLowerCase();
+  const filteredParticipants = participants.filter((participant) => {
+    if (!attendanceQuery) {
+      return true;
+    }
+    const full = `${participant.firstName} ${participant.lastName}`.toLowerCase();
+    return full.includes(attendanceQuery);
+  });
 
   return (
     <div className="container space-y-6">
@@ -318,6 +405,46 @@ export default function AdminPage() {
         </section>
       ) : null}
 
+      <section className="card p-6">
+        <h2 className="text-xl font-bold">Éditions mensuelles</h2>
+        <p className="muted mt-2 text-sm">
+          Téléchargez un PDF listant, pour chaque séance du mois, les personnes inscrites (nom et prénom).
+        </p>
+        {seasonMonthKeys.length === 0 ? (
+          <p className="muted mt-4 text-sm">Aucune séance disponible pour la saison active.</p>
+        ) : (
+          <ul className="mt-4 space-y-2">
+            {seasonMonthKeys.map((monthKey) => {
+              const { year, month } = parseMonthKey(monthKey);
+              const label = formatMonthYear(year, month);
+              const monthSessions = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
+              const isExporting = exportingMonth === monthKey;
+              return (
+                <li
+                  key={monthKey}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium capitalize">{label}</p>
+                    <p className="muted text-sm">
+                      {monthSessions.length} séance{monthSessions.length > 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={Boolean(exportingMonth)}
+                    onClick={() => downloadMonthPdf(monthKey)}
+                  >
+                    {isExporting ? "Génération…" : "Édition PDF"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="card p-6">
           <h2 className="text-xl font-bold">Séances</h2>
@@ -367,8 +494,27 @@ export default function AdminPage() {
           ) : (
             <>
               <p className="mt-2 font-medium">{formatParisShortDate(selectedSession.sessionDate)}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <input
+                  className="input min-w-[12rem] flex-1"
+                  placeholder="Rechercher un inscrit"
+                  value={attendanceSearch}
+                  onChange={(event) => setAttendanceSearch(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={participants.length === 0}
+                  onClick={markAllPresent}
+                >
+                  Tout marquer présent
+                </button>
+              </div>
               <ul className="mt-4 space-y-2">
-                {participants.map((participant) => {
+                {filteredParticipants.length === 0 ? (
+                  <li className="muted text-sm">Aucun inscrit trouvé.</li>
+                ) : (
+                  filteredParticipants.map((participant) => {
                   const record = attendance.find((item) => item.participantId === participant.id);
                   return (
                     <li
@@ -394,8 +540,36 @@ export default function AdminPage() {
                       </div>
                     </li>
                   );
-                })}
+                  })
+                )}
               </ul>
+              {addableParticipants.length > 0 ? (
+                <div className="mt-6 border-t border-[var(--border)] pt-4">
+                  <h3 className="text-sm font-semibold">Ajouter un adhérent inscrit au club</h3>
+                  <p className="muted mt-1 text-xs">
+                    Profils créés sur l&apos;appli mais pas encore inscrits à cette séance.
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {addableParticipants.map((participant) => (
+                      <li
+                        key={participant.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] px-3 py-2"
+                      >
+                        <span>
+                          {participant.firstName} {participant.lastName}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary text-xs"
+                          onClick={() => addParticipantToSession(participant.id)}
+                        >
+                          Inscrire et marquer présent
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </>
           )}
         </div>

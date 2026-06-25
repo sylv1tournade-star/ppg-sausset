@@ -1,7 +1,9 @@
 import {
+  formatMonthYear,
   getThursdayDatesForSeason,
   isSessionPast,
   seasonLabelFromStartYear,
+  toMonthKey,
 } from "@/lib/calendar";
 import {
   computeRanking,
@@ -11,7 +13,7 @@ import {
   normalizeEmail,
   participantDisplayName,
 } from "@/lib/helpers";
-import { matchesPaidMember, parsePaidMembersImport } from "@/lib/members";
+import { matchesPaidMember, memberKey, parsePaidMembersImport } from "@/lib/members";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type {
   Attendance,
@@ -455,9 +457,14 @@ export async function searchParticipants(query: string) {
   return participants
     .filter((participant) => {
       const full = participantDisplayName(participant).toLowerCase();
-      return full.includes(trimmed) || participant.email.includes(trimmed);
+      return full.includes(trimmed);
     })
-    .slice(0, 20);
+    .slice(0, 20)
+    .map((participant) => ({
+      id: participant.id,
+      firstName: participant.firstName,
+      lastName: participant.lastName,
+    }));
 }
 
 export async function getBureauStats(): Promise<BureauStats> {
@@ -518,6 +525,81 @@ export async function getBureauStats(): Promise<BureauStats> {
     .sort((a, b) => a.month.localeCompare(b.month));
 
   return { sessions: sessionStats, months };
+}
+
+export async function getParticipantAssiduity(participantId: string) {
+  const season = await getActiveSeason();
+  if (!season) {
+    return null;
+  }
+
+  const [sessions, participants, registrations, attendance] = await Promise.all([
+    getSessionsForSeason(season.id),
+    listParticipants(),
+    getRegistrationsForSeason(season.id),
+    getAttendanceForSeason(season.id),
+  ]);
+
+  const pastSessionIds = new Set(
+    sessions
+      .filter((session) => isSessionPast(session.sessionDate, season.endTime))
+      .map((session) => session.id),
+  );
+
+  const ranking = computeRanking({
+    participants,
+    registrations,
+    attendance,
+    pastSessionIds,
+    minSessions: 0,
+  });
+
+  return ranking.find((entry) => entry.participantId === participantId) ?? null;
+}
+
+export async function getAddableParticipantsForSession(sessionId: string) {
+  const season = await getActiveSeason();
+  if (!season) {
+    return [];
+  }
+
+  const [paidMembers, registered, participants] = await Promise.all([
+    listPaidMembers(season.id),
+    getSessionParticipants(sessionId),
+    listParticipants(),
+  ]);
+
+  const registeredIds = new Set(registered.map((participant) => participant.id));
+  const paidKeys = new Set(paidMembers.map((member) => member.normalizedKey));
+
+  return participants
+    .filter((participant) => {
+      if (registeredIds.has(participant.id)) {
+        return false;
+      }
+      const key = memberKey(participant.firstName, participant.lastName);
+      return paidKeys.has(key);
+    })
+    .sort((a, b) => a.firstName.localeCompare(b.firstName, "fr"));
+}
+
+export async function markAllAttendance(
+  sessionId: string,
+  participantIds: string[],
+  status: Attendance["status"],
+) {
+  for (const participantId of participantIds) {
+    await markAttendance(sessionId, participantId, status);
+  }
+}
+
+export async function registerAndMarkAttendance(
+  sessionId: string,
+  participantId: string,
+  status: Attendance["status"] = "present",
+) {
+  await registerParticipant(sessionId, participantId);
+  await markAttendance(sessionId, participantId, status);
 }
 
 export async function getParticipantSessions(participantId: string, seasonId?: string) {
@@ -644,5 +726,26 @@ export async function clearPaidMembers(seasonId: string) {
   if (error) {
     throw error;
   }
+}
+
+export async function getMonthRegistrationsReport(year: number, monthIndex: number) {
+  const season = await getActiveSeason();
+  if (!season) {
+    throw new Error("NO_SEASON");
+  }
+
+  const monthKey = toMonthKey(year, monthIndex);
+  const sessions = (await getSessionsForSeason(season.id)).filter((session) =>
+    session.sessionDate.startsWith(monthKey),
+  );
+  const enriched = await enrichSessions(sessions, season);
+
+  return {
+    season,
+    monthLabel: formatMonthYear(year, monthIndex),
+    year,
+    month: monthIndex,
+    sessions: enriched,
+  };
 }
 

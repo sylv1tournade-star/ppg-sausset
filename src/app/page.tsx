@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getParticipantToken } from "@/lib/auth";
 import { enrichSessions, getActiveSeason, getParticipantByToken, getRanking, getSessionsForSeason } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
-import { SessionCalendarView } from "@/components/session-calendar-view";
+import { HomeSessionsPanel } from "@/components/home-sessions-panel";
 
 export default async function HomePage() {
   if (!isSupabaseConfigured()) {
@@ -61,7 +61,7 @@ export default async function HomePage() {
         ) : null}
       </section>
 
-      <SessionCalendarView season={season} sessions={sessions} isLoggedIn={Boolean(participant)} />
+      <HomeSessionsPanel season={season} sessions={sessions} isLoggedIn={Boolean(participant)} />
 
       {ranking.length > 0 ? (
         <section className="card p-6">

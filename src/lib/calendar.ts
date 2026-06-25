@@ -262,6 +262,27 @@ export function isSessionPast(dateIso: string, endTime: string) {
   return endLocal < parisNow;
 }
 
+export function isSessionRegisterable(
+  session: { sessionDate: string; status: string },
+  season: { endTime: string },
+) {
+  if (session.status === "cancelled" || session.status === "rescheduled") {
+    return false;
+  }
+  return !isSessionPast(session.sessionDate, season.endTime);
+}
+
+export function findNextOpenSession<T extends { sessionDate: string; status: string }>(
+  sessions: T[],
+  season: { endTime: string },
+) {
+  return (
+    [...sessions]
+      .filter((session) => isSessionRegisterable(session, season))
+      .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate))[0] ?? null
+  );
+}
+
 export function formatTimeLabel(time: string) {
   return time.slice(0, 5).replace(":", "h");
 }

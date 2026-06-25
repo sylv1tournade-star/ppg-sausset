@@ -2,12 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { formatParisShortDate } from "@/lib/calendar";
-import type { Participant, SessionWithMeta } from "@/lib/types";
+import type { SessionWithMeta } from "@/lib/types";
+
+type SearchResult = {
+  id: string;
+  firstName: string;
+  lastName: string;
+};
 
 export default function RecherchePage() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<Participant[]>([]);
-  const [selected, setSelected] = useState<Participant | null>(null);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [selected, setSelected] = useState<SearchResult | null>(null);
   const [sessions, setSessions] = useState<SessionWithMeta[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -26,7 +32,7 @@ export default function RecherchePage() {
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  async function selectParticipant(participant: Participant) {
+  async function selectParticipant(participant: SearchResult) {
     setSelected(participant);
     setBusy(true);
     try {
@@ -45,7 +51,7 @@ export default function RecherchePage() {
         <p className="muted mt-2">Voir sur quelles séances une personne est inscrite.</p>
         <input
           className="input mt-4"
-          placeholder="Prénom, nom ou e-mail"
+          placeholder="Prénom ou nom"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -59,13 +65,10 @@ export default function RecherchePage() {
               <li key={participant.id}>
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-[var(--bg)]"
+                  className="flex w-full px-4 py-3 text-left hover:bg-[var(--bg)]"
                   onClick={() => selectParticipant(participant)}
                 >
-                  <span>
-                    {participant.firstName} {participant.lastName}
-                  </span>
-                  <span className="muted text-sm">{participant.email}</span>
+                  {participant.firstName} {participant.lastName}
                 </button>
               </li>
             ))}
@@ -89,6 +92,7 @@ export default function RecherchePage() {
                   <p className="font-medium">{formatParisShortDate(session.sessionDate)}</p>
                   {session.theme ? <p className="muted text-sm">{session.theme}</p> : null}
                   {session.status === "cancelled" ? <span className="badge badge-danger mt-1">Annulée</span> : null}
+                  {session.status === "rescheduled" ? <span className="badge badge-warn mt-1">Reportée</span> : null}
                 </li>
               ))}
             </ul>

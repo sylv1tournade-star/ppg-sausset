@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { getPersonalLink, getParticipantToken } from "@/lib/auth";
-import { formatParisShortDate } from "@/lib/calendar";
-import { getParticipantByToken, getParticipantSessions } from "@/lib/server-data";
+import { findNextOpenSession, formatParisShortDate } from "@/lib/calendar";
+import { getParticipantAssiduity, getParticipantByToken, getParticipantSessions, getSessionsForSeason, enrichSessions } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { LogoutButton } from "@/components/logout-button";
+import { MyRegistrationsList } from "@/components/my-registrations-list";
 
 export default async function MoiPage() {
   if (!isSupabaseConfigured()) {
@@ -49,8 +50,11 @@ export default async function MoiPage() {
   }
 
   const { season, sessions } = await getParticipantSessions(participant.id);
+  const assiduity = season ? await getParticipantAssiduity(participant.id) : null;
   const personalLink = getPersonalLink(participant.accessToken);
-  const upcoming = [...sessions].sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
+  const allSessions =
+    season ? await enrichSessions(await getSessionsForSeason(season.id), season, participant.id) : [];
+  const nextSession = season ? findNextOpenSession(allSessions, season) : null;
 
   return (
     <div className="container max-w-3xl space-y-6">
@@ -70,28 +74,44 @@ export default async function MoiPage() {
         </div>
       </section>
 
+      {nextSession ? (
+        <section className="card p-6">
+          <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent)]">Prochaine séance</p>
+          <p className="mt-1 text-lg font-bold">{formatParisShortDate(nextSession.sessionDate)} · 19h</p>
+          <p className="muted mt-1 text-sm">
+            {nextSession.isRegistered ? "Vous êtes inscrit(e)." : "Pas encore inscrit(e) pour ce jeudi."}
+          </p>
+          <Link href="/" className="btn btn-secondary mt-4">
+            {nextSession.isRegistered ? "Voir sur le calendrier" : "S'inscrire maintenant"}
+          </Link>
+        </section>
+      ) : null}
+
+      {assiduity && assiduity.registeredCount > 0 ? (
+        <section className="card p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-bold">Mon assiduité</h2>
+              <p className="muted mt-2 text-sm">Sur les séances passées où vous étiez inscrit(e).</p>
+            </div>
+            <span className="text-2xl font-bold text-[var(--accent)]">{assiduity.rate}%</span>
+          </div>
+          <p className="mt-4 text-sm">
+            <strong>{assiduity.presentCount}</strong> présence{assiduity.presentCount > 1 ? "s" : ""} sur{" "}
+            <strong>{assiduity.registeredCount}</strong> inscription{assiduity.registeredCount > 1 ? "s" : ""}
+          </p>
+          <Link href="/classement" className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)]">
+            Voir le classement
+          </Link>
+        </section>
+      ) : null}
+
       <section className="card p-6">
         <h2 className="text-xl font-bold">Mes inscriptions</h2>
         {!season ? (
           <p className="muted mt-2">Aucune saison active.</p>
-        ) : upcoming.length === 0 ? (
-          <p className="muted mt-2">Aucune inscription pour le moment.</p>
         ) : (
-          <ul className="mt-4 space-y-2">
-            {upcoming.map((session) => (
-              <li key={session.id} className="flex items-center justify-between rounded-xl bg-[var(--bg)] px-4 py-3">
-                <div>
-                  <p className="font-medium">{formatParisShortDate(session.sessionDate)}</p>
-                  {session.theme ? <p className="muted text-sm">{session.theme}</p> : null}
-                </div>
-                <div className="flex gap-2">
-                  <a className="btn btn-secondary text-sm" href={`/api/calendar/${session.id}?format=ics`}>
-                    .ics
-                  </a>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <MyRegistrationsList season={season} sessions={sessions} />
         )}
       </section>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatParisDate, isSessionPast } from "@/lib/calendar";
+import { formatParisDate, isSessionPast, isSessionRegisterable } from "@/lib/calendar";
 import type { Season, SessionWithMeta } from "@/lib/types";
 
 type Props = {
@@ -20,6 +20,8 @@ export function SessionDetail({ session, season, isLoggedIn, onSessionsUpdate }:
 
   const past = isSessionPast(session.sessionDate, season.endTime);
   const cancelled = session.status === "cancelled";
+  const rescheduled = session.status === "rescheduled";
+  const registerable = isSessionRegisterable(session, season);
 
   useEffect(() => {
     setRegistered(Boolean(session.isRegistered));
@@ -82,7 +84,8 @@ export function SessionDetail({ session, season, isLoggedIn, onSessionsUpdate }:
 
       <div className="mt-2 flex flex-wrap gap-2">
         {cancelled ? <span className="badge badge-danger">Annulée</span> : null}
-        {!cancelled && past ? <span className="badge badge-warn">Passée</span> : null}
+        {rescheduled ? <span className="badge badge-warn">Reportée</span> : null}
+        {!cancelled && !rescheduled && past ? <span className="badge badge-warn">Passée</span> : null}
         <span className="badge badge-ok">
           {count} inscrit{count > 1 ? "s" : ""}
         </span>
@@ -110,14 +113,14 @@ export function SessionDetail({ session, season, isLoggedIn, onSessionsUpdate }:
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {!past && !cancelled ? (
-          <button
-            type="button"
-            className={registered ? "btn btn-danger" : "btn btn-primary"}
-            disabled={busy}
-            onClick={toggleRegistration}
-          >
-            {busy ? "..." : registered ? "Se désinscrire" : "S'inscrire"}
+        {registerable && !registered ? (
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={toggleRegistration}>
+            {busy ? "..." : "S'inscrire"}
+          </button>
+        ) : null}
+        {registered && !past ? (
+          <button type="button" className="btn btn-danger" disabled={busy} onClick={toggleRegistration}>
+            {busy ? "..." : "Se désinscrire"}
           </button>
         ) : null}
         {registered && !cancelled ? (

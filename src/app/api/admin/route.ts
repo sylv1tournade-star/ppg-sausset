@@ -5,6 +5,7 @@ import {
   countPaidMembers,
   createSeason,
   getActiveSeason,
+  getAddableParticipantsForSession,
   getAttendanceForSession,
   getBureauStats,
   getSessionParticipants,
@@ -12,7 +13,9 @@ import {
   importPaidMembers,
   listPaidMembers,
   listSeasons,
+  markAllAttendance,
   markAttendance,
+  registerAndMarkAttendance,
   updateSession,
 } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -67,11 +70,12 @@ export async function GET(request: Request) {
 
   const sessionId = searchParams.get("sessionId");
   if (sessionId) {
-    const [participants, attendance] = await Promise.all([
+    const [participants, attendance, addable] = await Promise.all([
       getSessionParticipants(sessionId),
       getAttendanceForSession(sessionId),
+      getAddableParticipantsForSession(sessionId),
     ]);
-    return NextResponse.json({ participants, attendance });
+    return NextResponse.json({ participants, attendance, addable });
   }
 
   const sessions = await getSessionsForSeason(season.id);
@@ -144,6 +148,37 @@ export async function POST(request: Request) {
     await markAttendance(sessionId, participantId, status);
     const attendance = await getAttendanceForSession(sessionId);
     return NextResponse.json({ attendance });
+  }
+
+  if (action === "attendance.markAll") {
+    const sessionId = String(body.sessionId ?? "");
+    const status = String(body.status ?? "present") as "present" | "absent" | "excused";
+    if (!sessionId || !["present", "absent", "excused"].includes(status)) {
+      return NextResponse.json({ error: "Données invalides." }, { status: 400 });
+    }
+    const participants = await getSessionParticipants(sessionId);
+    await markAllAttendance(
+      sessionId,
+      participants.map((participant) => participant.id),
+      status,
+    );
+    const attendance = await getAttendanceForSession(sessionId);
+    return NextResponse.json({ attendance });
+  }
+
+  if (action === "attendance.add") {
+    const sessionId = String(body.sessionId ?? "");
+    const participantId = String(body.participantId ?? "");
+    if (!sessionId || !participantId) {
+      return NextResponse.json({ error: "Données invalides." }, { status: 400 });
+    }
+    await registerAndMarkAttendance(sessionId, participantId, "present");
+    const [participants, attendance, addable] = await Promise.all([
+      getSessionParticipants(sessionId),
+      getAttendanceForSession(sessionId),
+      getAddableParticipantsForSession(sessionId),
+    ]);
+    return NextResponse.json({ participants, attendance, addable });
   }
 
   if (action === "members.import") {

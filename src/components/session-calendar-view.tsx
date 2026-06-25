@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatMonthYear,
   formatParisShortDate,
   getMonthGrid,
   getWeekdayLabels,
   isSessionPast,
+  isSessionRegisterable,
   parseMonthKey,
   shiftMonthKey,
 } from "@/lib/calendar";
@@ -17,12 +18,11 @@ type Props = {
   season: Season;
   sessions: SessionWithMeta[];
   isLoggedIn: boolean;
+  focusSessionId?: string | null;
 };
 
 function pickDefaultMonth(sessions: SessionWithMeta[], season: Season) {
-  const upcoming = sessions.find(
-    (session) => session.status !== "cancelled" && !isSessionPast(session.sessionDate, season.endTime),
-  );
+  const upcoming = sessions.find((session) => isSessionRegisterable(session, season));
   if (upcoming) {
     return upcoming.sessionDate.slice(0, 7);
   }
@@ -31,18 +31,33 @@ function pickDefaultMonth(sessions: SessionWithMeta[], season: Season) {
 
 function pickDefaultSession(sessions: SessionWithMeta[], season: Season, monthKey: string) {
   const inMonth = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
-  const upcoming = inMonth.find(
-    (session) => session.status !== "cancelled" && !isSessionPast(session.sessionDate, season.endTime),
-  );
+  const upcoming = inMonth.find((session) => isSessionRegisterable(session, season));
   return upcoming?.id ?? inMonth[0]?.id ?? null;
 }
 
-export function SessionCalendarView({ season, sessions: initialSessions, isLoggedIn }: Props) {
+export function SessionCalendarView({
+  season,
+  sessions: initialSessions,
+  isLoggedIn,
+  focusSessionId = null,
+}: Props) {
   const [sessions, setSessions] = useState(initialSessions);
   const [monthKey, setMonthKey] = useState(() => pickDefaultMonth(initialSessions, season));
   const [selectedId, setSelectedId] = useState<string | null>(() =>
     pickDefaultSession(initialSessions, season, pickDefaultMonth(initialSessions, season)),
   );
+
+  useEffect(() => {
+    if (!focusSessionId) {
+      return;
+    }
+    const session = sessions.find((item) => item.id === focusSessionId);
+    if (!session) {
+      return;
+    }
+    setMonthKey(session.sessionDate.slice(0, 7));
+    setSelectedId(session.id);
+  }, [focusSessionId, sessions]);
 
   const sessionsByDate = useMemo(() => {
     const map = new Map<string, SessionWithMeta>();
@@ -133,7 +148,8 @@ export function SessionCalendarView({ season, sessions: initialSessions, isLogge
                 >
                   {formatParisShortDate(session.sessionDate)}
                   {session.status === "cancelled" ? " · annulée" : ""}
-                  {past && session.status !== "cancelled" ? " · passée" : ""}
+                  {session.status === "rescheduled" ? " · reportée" : ""}
+                  {past && session.status !== "cancelled" && session.status !== "rescheduled" ? " · passée" : ""}
                   {session.registrationCount > 0 ? ` (${session.registrationCount})` : ""}
                 </button>
               );
@@ -184,9 +200,11 @@ export function SessionCalendarView({ season, sessions: initialSessions, isLogge
                     ? "bg-[var(--accent)] text-white shadow-md"
                     : session.status === "cancelled"
                       ? "bg-[#f8d7da] text-[var(--danger)]"
-                      : past
-                        ? "bg-[#fff3cd] text-[#856404]"
-                        : "bg-[var(--accent-soft)] text-[var(--accent)] hover:brightness-95",
+                      : session.status === "rescheduled"
+                        ? "bg-[#ffe8cc] text-[#9a5b13]"
+                        : past
+                          ? "bg-[#fff3cd] text-[#856404]"
+                          : "bg-[var(--accent-soft)] text-[var(--accent)] hover:brightness-95",
                 ].join(" ")}
               >
                 <span>{cell.day}</span>
