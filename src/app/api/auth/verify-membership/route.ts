@@ -22,6 +22,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ eligible: false, code: "NO_SEASON", message: "Aucune saison active." });
   }
 
+  if (result.reason === "EMPTY_LIST") {
+    return NextResponse.json({
+      eligible: false,
+      code: "LIST_NOT_READY",
+      message: "Les inscriptions ne sont pas encore ouvertes.",
+    });
+  }
+
   if (!result.allowed) {
     return NextResponse.json({
       eligible: false,

@@ -593,7 +593,7 @@ export async function isPaidMemberForActiveSeason(firstName: string, lastName: s
 
   const members = await listPaidMembers(season.id);
   if (members.length === 0) {
-    return { allowed: true, reason: "EMPTY_LIST" as const, season };
+    return { allowed: false, reason: "EMPTY_LIST" as const, season };
   }
 
   const allowed = matchesPaidMember(firstName, lastName, members);

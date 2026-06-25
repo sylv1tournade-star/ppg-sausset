@@ -29,6 +29,15 @@ export async function POST(request: Request) {
   if (membership.reason === "NO_SEASON") {
     return NextResponse.json({ error: "Aucune saison active." }, { status: 400 });
   }
+  if (membership.reason === "EMPTY_LIST") {
+    return NextResponse.json(
+      {
+        error: "Les inscriptions ne sont pas encore ouvertes. Contactez Manon.",
+        code: "LIST_NOT_READY",
+      },
+      { status: 403 },
+    );
+  }
   if (!membership.allowed && membership.reason === "NOT_FOUND") {
     return NextResponse.json(
       {

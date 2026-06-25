@@ -237,6 +237,11 @@ export default function AdminPage() {
           Importez la liste des membres du club. Seules ces personnes pourront créer un profil PPG. Format : une ligne
           par personne, « Prénom Nom » ou « Prénom;Nom » (CSV).
         </p>
+        {paidMembers.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
+            Liste vide : les inscriptions publiques sont bloquées tant que cette liste n&apos;est pas importée.
+          </p>
+        ) : null}
         <div className="mt-4 flex flex-wrap gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
