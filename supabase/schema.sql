@@ -1,0 +1,73 @@
+-- PPG Courir à Sausset — schéma dédié (projet Supabase séparé de Challenge CAS)
+
+create table if not exists ppg_seasons (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  start_year integer not null,
+  day_of_week integer not null default 4 check (day_of_week between 0 and 6),
+  start_time time not null default '19:00',
+  end_time time not null default '20:00',
+  location text not null default 'Sausset-les-Pins',
+  is_active boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists ppg_sessions (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references ppg_seasons(id) on delete cascade,
+  session_date date not null,
+  status text not null default 'scheduled'
+    check (status in ('scheduled', 'cancelled', 'rescheduled')),
+  theme text,
+  notes text,
+  created_at timestamptz not null default now(),
+  unique (season_id, session_date)
+);
+
+create table if not exists ppg_participants (
+  id uuid primary key default gen_random_uuid(),
+  first_name text not null,
+  last_name text not null,
+  email text not null,
+  access_token text not null unique,
+  created_at timestamptz not null default now(),
+  unique (email)
+);
+
+create table if not exists ppg_registrations (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references ppg_sessions(id) on delete cascade,
+  participant_id uuid not null references ppg_participants(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (session_id, participant_id)
+);
+
+create table if not exists ppg_attendance (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references ppg_sessions(id) on delete cascade,
+  participant_id uuid not null references ppg_participants(id) on delete cascade,
+  status text not null check (status in ('present', 'absent', 'excused')),
+  marked_at timestamptz not null default now(),
+  unique (session_id, participant_id)
+);
+
+create index if not exists idx_ppg_sessions_season on ppg_sessions(season_id);
+create index if not exists idx_ppg_sessions_date on ppg_sessions(session_date);
+create index if not exists idx_ppg_registrations_session on ppg_registrations(session_id);
+create index if not exists idx_ppg_registrations_participant on ppg_registrations(participant_id);
+create index if not exists idx_ppg_attendance_session on ppg_attendance(session_id);
+create index if not exists idx_ppg_participants_token on ppg_participants(access_token);
+create index if not exists idx_ppg_participants_email on ppg_participants(email);
+
+create table if not exists ppg_paid_members (
+  id uuid primary key default gen_random_uuid(),
+  season_id uuid not null references ppg_seasons(id) on delete cascade,
+  first_name text not null,
+  last_name text not null,
+  normalized_key text not null,
+  imported_at timestamptz not null default now(),
+  unique (season_id, normalized_key)
+);
+
+create index if not exists idx_ppg_paid_members_season on ppg_paid_members(season_id);
+create index if not exists idx_ppg_paid_members_key on ppg_paid_members(season_id, normalized_key);
