@@ -32,12 +32,18 @@ const RECIPIENT_SECTIONS: Array<{ type: BillingRecipientType; title: string; hin
 ];
 
 function initialStatuses(preview: MonthBillingPreview) {
-  const map: Record<string, BillingAccountingStatus> = {};
+  const statusMap: Record<string, BillingAccountingStatus> = {};
+  const commentMap: Record<string, string> = {};
   for (const session of preview.sessions) {
     const saved = preview.lastValidation?.sessionSnapshot.find((item) => item.id === session.id);
-    map[session.id] = saved?.accountingStatus ?? session.suggestedAccountingStatus;
+    const savedStatus = saved?.accountingStatus as string | undefined;
+    statusMap[session.id] =
+      savedStatus && savedStatus !== "not_held"
+        ? (savedStatus as BillingAccountingStatus)
+        : session.suggestedAccountingStatus;
+    commentMap[session.id] = saved?.comment ?? "";
   }
-  return map;
+  return { statusMap, commentMap };
 }
 
 function countBillable(statuses: Record<string, BillingAccountingStatus>) {
@@ -56,6 +62,7 @@ export default function FacturationPage() {
   const [previewMonthKey, setPreviewMonthKey] = useState<string | null>(null);
   const [preview, setPreview] = useState<MonthBillingPreview | null>(null);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, BillingAccountingStatus>>({});
+  const [sessionComments, setSessionComments] = useState<Record<string, string>>({});
   const [billedCount, setBilledCount] = useState(0);
   const [billingNote, setBillingNote] = useState("");
   const [newEmails, setNewEmails] = useState<Record<BillingRecipientType, { email: string; label: string }>>({
@@ -178,10 +185,11 @@ export default function FacturationPage() {
         throw new Error(data.error ?? "Erreur");
       }
       const nextPreview = data.preview as MonthBillingPreview;
-      const statuses = initialStatuses(nextPreview);
+      const { statusMap, commentMap } = initialStatuses(nextPreview);
       setPreview(nextPreview);
-      setSessionStatuses(statuses);
-      setBilledCount(nextPreview.lastValidation?.billedSessionCount ?? countBillable(statuses));
+      setSessionStatuses(statusMap);
+      setSessionComments(commentMap);
+      setBilledCount(nextPreview.lastValidation?.billedSessionCount ?? countBillable(statusMap));
       setBillingNote(nextPreview.lastValidation?.billingNote ?? "");
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Erreur");
@@ -227,6 +235,7 @@ export default function FacturationPage() {
           sessionStatuses: Object.entries(sessionStatuses).map(([sessionId, accountingStatus]) => ({
             sessionId,
             accountingStatus,
+            comment: sessionComments[sessionId] ?? "",
           })),
           sendEmail: true,
         }),
@@ -261,12 +270,7 @@ export default function FacturationPage() {
                 <> · {session.registeredParticipants.map((p) => `${p.firstName} ${p.lastName}`).join(", ")}</>
               ) : null}
             </p>
-            <p className="muted text-sm">
-              {session.presentCount} présent(s) saisi(s)
-              {session.attendanceMarkedCount < session.registeredCount && session.registeredCount > 0 ? (
-                <span className="text-[var(--warn)]"> · présences partielles</span>
-              ) : null}
-            </p>
+            <p className="muted text-sm">{session.presentCount} présent(s) saisi(s)</p>
           </div>
           <label className="space-y-1">
             <span className="text-xs font-medium">Statut comptable</span>
@@ -286,6 +290,17 @@ export default function FacturationPage() {
             </select>
           </label>
         </div>
+        <label className="mt-3 block space-y-1">
+          <span className="text-xs font-medium">Commentaire (optionnel)</span>
+          <input
+            className="input"
+            placeholder="Ex. : séance maintenue malgré la pluie"
+            value={sessionComments[session.id] ?? ""}
+            onChange={(event) =>
+              setSessionComments((current) => ({ ...current, [session.id]: event.target.value }))
+            }
+          />
+        </label>
       </article>
     );
   }

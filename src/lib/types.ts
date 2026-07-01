@@ -99,12 +99,7 @@ export type TreasurerEmail = {
 
 export type BillingRecipientType = "treasurer" | "coach" | "billing_manager";
 
-export type BillingAccountingStatus =
-  | "realized"
-  | "cancelled"
-  | "rescheduled"
-  | "not_held"
-  | "future";
+export type BillingAccountingStatus = "realized" | "cancelled" | "rescheduled" | "future";
 
 export type BillingSessionSnapshot = {
   id: string;
@@ -113,6 +108,7 @@ export type BillingSessionSnapshot = {
   registeredCount: number;
   presentCount: number;
   accountingStatus: BillingAccountingStatus;
+  comment: string | null;
   presentParticipants: { firstName: string; lastName: string }[];
 };
 
@@ -138,7 +134,6 @@ export type BillingSessionRow = {
   status: SessionStatus;
   registeredCount: number;
   presentCount: number;
-  attendanceMarkedCount: number;
   suggestedAccountingStatus: BillingAccountingStatus;
   presentParticipants: { firstName: string; lastName: string }[];
   registeredParticipants: { firstName: string; lastName: string }[];

@@ -106,6 +106,9 @@ export async function buildBillingValidationPdf(input: {
     if (session.theme?.trim()) {
       drawLine(`Thème : ${session.theme.trim()}`, { size: 10, indent: 8 });
     }
+    if (session.comment?.trim()) {
+      drawLine(`Commentaire : ${session.comment.trim()}`, { size: 10, indent: 8 });
+    }
     drawLine(
       `${session.registeredCount} inscrit(s) en ligne · ${session.presentCount} présent(s)`,
       { size: 10, indent: 8 },

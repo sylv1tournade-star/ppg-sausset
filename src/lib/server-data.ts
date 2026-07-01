@@ -33,7 +33,7 @@ import type {
   SessionWithMeta,
   TreasurerEmail,
 } from "@/lib/types";
-import { billableSnapshotsFromRows, countBillableSessions, suggestAccountingStatus } from "@/lib/billing";
+import { billableSnapshotsFromRows, buildSessionSnapshot, countBillableSessions, suggestAccountingStatus } from "@/lib/billing";
 
 export async function getActiveSeason(): Promise<Season | null> {
   const supabase = getSupabaseAdmin();
@@ -917,11 +917,9 @@ async function buildBillingSessionRow(
   }));
 
   const suggestedAccountingStatus = suggestAccountingStatus({
-    sessionDate: session.sessionDate,
     status: session.status,
     past,
     presentCount: presentParticipants.length,
-    registeredCount: registered.length,
   });
 
   return {
@@ -931,7 +929,6 @@ async function buildBillingSessionRow(
     status: session.status,
     registeredCount: registered.length,
     presentCount: presentParticipants.length,
-    attendanceMarkedCount: attendance.length,
     suggestedAccountingStatus,
     presentParticipants,
     registeredParticipants,
@@ -939,7 +936,14 @@ async function buildBillingSessionRow(
 }
 
 function accountingStatusFromSnapshot(snapshot: BillingSessionSnapshot): BillingAccountingStatus {
-  return snapshot.accountingStatus ?? (snapshot.presentCount >= 1 ? "realized" : "not_held");
+  const raw = snapshot.accountingStatus as string;
+  if (raw === "not_held") {
+    return "cancelled";
+  }
+  if (raw === "realized" || raw === "cancelled" || raw === "rescheduled" || raw === "future") {
+    return raw;
+  }
+  return snapshot.presentCount >= 1 ? "realized" : "cancelled";
 }
 
 export async function getMonthBillingPreview(year: number, monthIndex: number): Promise<MonthBillingPreview> {
@@ -986,7 +990,11 @@ export async function saveAndSendMonthValidation(input: {
   monthIndex: number;
   billedSessionCount: number;
   billingNote?: string | null;
-  sessionStatuses: Array<{ sessionId: string; accountingStatus: BillingAccountingStatus }>;
+  sessionStatuses: Array<{
+    sessionId: string;
+    accountingStatus: BillingAccountingStatus;
+    comment?: string | null;
+  }>;
   sendEmail: boolean;
 }) {
   const preview = await getMonthBillingPreview(input.year, input.monthIndex);
@@ -1002,20 +1010,16 @@ export async function saveAndSendMonthValidation(input: {
     input.sessionStatuses.map((item) => [item.sessionId, item.accountingStatus]),
   ) as Record<string, BillingAccountingStatus>;
 
+  const commentBySessionId = Object.fromEntries(
+    input.sessionStatuses.map((item) => [item.sessionId, item.comment?.trim() ?? ""]),
+  ) as Record<string, string>;
+
   const allSnapshots = preview.sessions.map((row) => {
     const accountingStatus = statusBySessionId[row.id] ?? row.suggestedAccountingStatus;
-    return {
-      id: row.id,
-      sessionDate: row.sessionDate,
-      theme: row.theme,
-      registeredCount: row.registeredCount,
-      presentCount: row.presentCount,
-      accountingStatus,
-      presentParticipants: row.presentParticipants,
-    };
+    return buildSessionSnapshot(row, accountingStatus, commentBySessionId[row.id] ?? null);
   });
 
-  const billableSnapshots = billableSnapshotsFromRows(preview.sessions, statusBySessionId);
+  const billableSnapshots = billableSnapshotsFromRows(preview.sessions, statusBySessionId, commentBySessionId);
   const computedSessionCount = countBillableSessions(
     preview.sessions.map((row) => statusBySessionId[row.id] ?? row.suggestedAccountingStatus),
   );

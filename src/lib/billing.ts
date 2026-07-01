@@ -4,16 +4,13 @@ export const ACCOUNTING_STATUS_LABELS: Record<BillingAccountingStatus, string> =
   realized: "Réalisée (facturable)",
   cancelled: "Annulée",
   rescheduled: "Reportée",
-  not_held: "Non tenue",
   future: "À venir",
 };
 
 export function suggestAccountingStatus(input: {
-  sessionDate: string;
   status: SessionStatus;
   past: boolean;
   presentCount: number;
-  registeredCount: number;
 }): BillingAccountingStatus {
   if (!input.past) {
     return "future";
@@ -27,10 +24,7 @@ export function suggestAccountingStatus(input: {
   if (input.presentCount >= 1) {
     return "realized";
   }
-  if (input.registeredCount === 0) {
-    return "not_held";
-  }
-  return "not_held";
+  return "cancelled";
 }
 
 export function countBillableSessions(statuses: BillingAccountingStatus[]) {
@@ -40,6 +34,7 @@ export function countBillableSessions(statuses: BillingAccountingStatus[]) {
 export function buildSessionSnapshot(
   row: BillingSessionRow,
   accountingStatus: BillingAccountingStatus,
+  comment: string | null = null,
 ) {
   return {
     id: row.id,
@@ -48,6 +43,7 @@ export function buildSessionSnapshot(
     registeredCount: row.registeredCount,
     presentCount: row.presentCount,
     accountingStatus,
+    comment: comment?.trim() || null,
     presentParticipants: row.presentParticipants,
   };
 }
@@ -55,11 +51,12 @@ export function buildSessionSnapshot(
 export function billableSnapshotsFromRows(
   rows: BillingSessionRow[],
   statusBySessionId: Record<string, BillingAccountingStatus>,
+  commentBySessionId: Record<string, string>,
 ) {
   return rows
     .map((row) => {
       const status = statusBySessionId[row.id] ?? row.suggestedAccountingStatus;
-      return buildSessionSnapshot(row, status);
+      return buildSessionSnapshot(row, status, commentBySessionId[row.id] ?? null);
     })
     .filter((snapshot) => snapshot.accountingStatus === "realized");
 }
