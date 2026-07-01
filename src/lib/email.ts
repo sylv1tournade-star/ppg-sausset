@@ -1,3 +1,11 @@
+import {
+  buildBrandedEmailHtml,
+  emailParagraph,
+  emailStrong,
+  escapeHtml,
+} from "@/lib/email-template";
+import { getAppUrl } from "@/lib/auth";
+
 export function isBrevoConfigured() {
   return Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
 }
@@ -22,26 +30,35 @@ export async function sendBillingValidationEmail(input: {
 
   const correctionLine =
     input.billedSessionCount !== input.computedSessionCount
-      ? `<p><strong>Correction facturation :</strong> ${input.billedSessionCount} séance(s) facturée(s) (calcul automatique : ${input.computedSessionCount}).</p>`
-      : `<p><strong>Nombre de séances facturées :</strong> ${input.billedSessionCount}.</p>`;
+      ? emailParagraph(
+          `<strong>Correction facturation :</strong> ${input.billedSessionCount} séance(s) facturée(s) (calcul automatique : ${input.computedSessionCount}).`,
+        )
+      : emailParagraph(`<strong>Nombre de séances facturées :</strong> ${input.billedSessionCount}.`);
 
   const noteLine = input.billingNote?.trim()
-    ? `<p><strong>Note :</strong> ${escapeHtml(input.billingNote.trim())}</p>`
+    ? emailParagraph(`<strong>Note :</strong> ${escapeHtml(input.billingNote.trim())}`)
     : "";
 
   const resendLine = input.isResend
-    ? "<p><em>Ceci est un nouvel envoi (correction ou mise à jour).</em></p>"
+    ? emailParagraph("<em>Ceci est un nouvel envoi (correction ou mise à jour).</em>")
     : "";
 
-  const htmlContent = `
-    <p>Bonjour,</p>
-    <p>Suzanne a validé les cours PPG de <strong>${escapeHtml(input.monthLabel)}</strong>.</p>
-    ${correctionLine}
-    ${noteLine}
-    ${resendLine}
-    <p>Le détail des séances réalisées et des présences est en pièce jointe (PDF).</p>
-    <p>Cordialement,<br/>PPG Courir à Sausset</p>
-  `.trim();
+  const htmlContent = buildBrandedEmailHtml({
+    preheader: `Validation des cours PPG — ${input.monthLabel}`,
+    title: `Cours validés — ${input.monthLabel}`,
+    badge: { text: "Validation mensuelle", tone: "accent" },
+    bodyHtml: [
+      emailParagraph("Bonjour,"),
+      emailParagraph(
+        `Suzanne a validé les cours PPG de ${emailStrong(input.monthLabel)}.`,
+      ),
+      correctionLine,
+      noteLine,
+      resendLine,
+      emailParagraph("Le détail des séances réalisées et des présences est en pièce jointe (PDF)."),
+    ].join(""),
+    signature: "PPG Courir à Sausset",
+  });
 
   await postBrevoEmail({
     sender: { name: senderName, email: senderEmail },
@@ -71,13 +88,22 @@ export async function sendValidationReminderEmail(input: {
   const senderEmail = process.env.BREVO_SENDER_EMAIL!;
   const facturationUrl = `${input.appUrl.replace(/\/$/, "")}/admin/facturation`;
 
-  const htmlContent = `
-    <p>Bonjour Suzanne,</p>
-    <p>La dernière séance PPG de <strong>${escapeHtml(input.monthLabel)}</strong> est terminée.</p>
-    <p>Vous pouvez maintenant valider le mois comptablement et envoyer le récapitulatif aux trésoriers.</p>
-    <p><a href="${escapeHtml(facturationUrl)}">Ouvrir la facturation PPG</a></p>
-    <p>Cordialement,<br/>PPG Courir à Sausset</p>
-  `.trim();
+  const htmlContent = buildBrandedEmailHtml({
+    preheader: `À valider : ${input.monthLabel}`,
+    title: "Validation mensuelle à faire",
+    badge: { text: "Rappel", tone: "warn" },
+    bodyHtml: [
+      emailParagraph("Bonjour Suzanne,"),
+      emailParagraph(
+        `La dernière séance PPG de ${emailStrong(input.monthLabel)} est terminée.`,
+      ),
+      emailParagraph(
+        "Vous pouvez maintenant valider le mois comptablement et envoyer le récapitulatif aux trésoriers.",
+      ),
+    ].join(""),
+    cta: { label: "Ouvrir la facturation PPG", href: facturationUrl },
+    signature: "PPG Courir à Sausset",
+  });
 
   await postBrevoEmail({
     sender: { name: senderName, email: senderEmail },
@@ -103,22 +129,36 @@ export async function sendSessionNotMaintainedEmail(input: {
   const senderName = process.env.BREVO_SENDER_NAME ?? "PPG Courir à Sausset";
   const senderEmail = process.env.BREVO_SENDER_EMAIL!;
   const statusLabel = input.status === "cancelled" ? "annulée" : "reportée";
+  const appUrl = getAppUrl().replace(/\/$/, "");
+
   const themeLine = input.theme?.trim()
-    ? `<p><strong>Thème prévu :</strong> ${escapeHtml(input.theme.trim())}</p>`
-    : "";
-  const notesLine = input.notes?.trim()
-    ? `<p><strong>Précisions :</strong> ${escapeHtml(input.notes.trim())}</p>`
+    ? emailParagraph(`<strong>Thème prévu :</strong> ${escapeHtml(input.theme.trim())}`)
     : "";
 
-  const htmlContent = `
-    <p>Bonjour ${escapeHtml(input.firstName)},</p>
-    <p>La séance PPG du <strong>${escapeHtml(input.sessionDateLabel)}</strong> est <strong>${statusLabel}</strong>.</p>
-    ${themeLine}
-    ${notesLine}
-    <p>Vous n'avez pas besoin de vous déplacer pour cette date.</p>
-    <p>Consultez le calendrier PPG pour les prochaines séances.</p>
-    <p>Cordialement,<br/>PPG Courir à Sausset · Manon</p>
-  `.trim();
+  const notesLine = input.notes?.trim()
+    ? emailParagraph(`<strong>Précisions :</strong> ${escapeHtml(input.notes.trim())}`)
+    : "";
+
+  const htmlContent = buildBrandedEmailHtml({
+    preheader: `Séance ${statusLabel} — ${input.sessionDateLabel}`,
+    title: `Séance ${statusLabel}`,
+    badge: {
+      text: input.status === "cancelled" ? "Séance annulée" : "Séance reportée",
+      tone: input.status === "cancelled" ? "danger" : "warn",
+    },
+    bodyHtml: [
+      emailParagraph(`Bonjour ${escapeHtml(input.firstName)},`),
+      emailParagraph(
+        `La séance PPG du ${emailStrong(input.sessionDateLabel)} est ${emailStrong(statusLabel)}.`,
+      ),
+      themeLine,
+      notesLine,
+      emailParagraph("Vous n'avez pas besoin de vous déplacer pour cette date."),
+      emailParagraph("Consultez le calendrier PPG pour les prochaines séances."),
+    ].join(""),
+    cta: { label: "Voir le calendrier PPG", href: appUrl },
+    signature: "PPG Courir à Sausset · Manon",
+  });
 
   await postBrevoEmail({
     sender: { name: senderName, email: senderEmail },
@@ -144,12 +184,4 @@ async function postBrevoEmail(body: Record<string, unknown>) {
     const text = await response.text();
     throw new Error(`BREVO_SEND_FAILED:${response.status}:${text}`);
   }
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
