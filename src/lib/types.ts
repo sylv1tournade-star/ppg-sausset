@@ -88,3 +88,59 @@ export type BureauStats = {
     sessions: number;
   }[];
 };
+
+export type TreasurerEmail = {
+  id: string;
+  email: string;
+  label: string | null;
+  createdAt: string;
+};
+
+export type BillingSessionSnapshot = {
+  id: string;
+  sessionDate: string;
+  theme: string | null;
+  presentCount: number;
+  presentParticipants: { firstName: string; lastName: string }[];
+};
+
+export type MonthValidation = {
+  id: string;
+  seasonId: string;
+  year: number;
+  month: number;
+  computedSessionCount: number;
+  billedSessionCount: number;
+  billingNote: string | null;
+  sessionSnapshot: BillingSessionSnapshot[];
+  lastSentAt: string | null;
+  sendCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BillingSessionRow = {
+  id: string;
+  sessionDate: string;
+  theme: string | null;
+  status: SessionStatus;
+  registeredCount: number;
+  presentCount: number;
+  attendanceComplete: boolean;
+  isRealized: boolean;
+  presentParticipants: { firstName: string; lastName: string }[];
+  issues: string[];
+};
+
+export type MonthBillingPreview = {
+  season: Season;
+  monthLabel: string;
+  year: number;
+  month: number;
+  sessions: BillingSessionRow[];
+  realizedSessions: BillingSessionSnapshot[];
+  computedSessionCount: number;
+  blockingIssues: string[];
+  canValidate: boolean;
+  lastValidation: MonthValidation | null;
+};

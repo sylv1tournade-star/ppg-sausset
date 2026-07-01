@@ -38,8 +38,36 @@ Copier `.env.local.example` → `.env.local`, puis renseigner les clés depuis
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://evzhlkcrjmcgoxqgnzfr.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Clé `anon` / publishable |
 | `SUPABASE_SERVICE_ROLE_KEY` | Clé `service_role` (secrète, serveur uniquement) |
-| `PPG_ADMIN_PIN` | PIN admin Manon |
+| `PPG_ADMIN_PIN` | PIN admin Manon (coach) |
+| `PPG_SUPER_ADMIN_PIN` | PIN Suzanne (coach + facturation) |
+| `BREVO_API_KEY` | Clé API Brevo pour l'envoi aux trésoriers |
+| `BREVO_SENDER_EMAIL` | E-mail expéditeur vérifié dans Brevo |
+| `BREVO_SENDER_NAME` | Nom affiché (ex. `PPG Courir à Sausset`) |
 | `NEXT_PUBLIC_APP_URL` | URL publique (liens personnels) |
+
+## Facturation (Suzanne)
+
+- `/admin/facturation` — réservé au PIN super admin (`PPG_SUPER_ADMIN_PIN`)
+- Manon (`PPG_ADMIN_PIN`) garde l'admin coach sans accès facturation
+- E-mails des trésoriers modifiables dans l'appli
+- Validation mensuelle avec correction manuelle du nombre de séances facturées
+- PDF des séances réalisées + présences envoyé via Brevo (renvoi possible)
+
+Migration SQL : `supabase/migration_billing.sql`
+
+## Configuration Brevo
+
+1. Créer un compte sur [brevo.com](https://www.brevo.com) (offre gratuite : 300 e-mails/jour)
+2. **Expéditeurs** → ajouter et vérifier l'adresse d'envoi (ex. `ppg@courir-a-sausset.fr` ou une adresse perso)
+3. **SMTP & API** → **Clés API** → créer une clé avec permission d'envoi transactionnel
+4. Sur **Vercel** (projet `ppg-sausset`) → Settings → Environment Variables :
+   - `BREVO_API_KEY` = la clé API
+   - `BREVO_SENDER_EMAIL` = l'adresse vérifiée
+   - `BREVO_SENDER_NAME` = `PPG Courir à Sausset`
+   - `PPG_SUPER_ADMIN_PIN` = PIN choisi pour Suzanne
+5. Redéployer l'application
+6. Suzanne se connecte sur `/admin` avec son PIN → **Facturation trésoriers**
+7. Ajouter les e-mails des trésoriers dans l'interface
 
 ## Premier lancement
 

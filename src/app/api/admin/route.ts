@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { isAdminAuthenticated, setAdminCookie, verifyAdminPin, clearAdminCookie } from "@/lib/auth";
+import {
+  clearAdminCookie,
+  getAdminRole,
+  isAdminAuthenticated,
+  resolveAdminPin,
+  setAdminCookie,
+} from "@/lib/auth";
 import {
   clearPaidMembers,
   countPaidMembers,
@@ -36,7 +42,12 @@ export async function GET(request: Request) {
   const action = searchParams.get("action");
 
   if (action === "ping") {
-    return NextResponse.json({ admin: await isAdminAuthenticated() });
+    const role = await getAdminRole();
+    return NextResponse.json({
+      admin: role !== null,
+      role,
+      superAdmin: role === "super_admin",
+    });
   }
 
   const denied = await requireAdmin();
@@ -92,11 +103,12 @@ export async function POST(request: Request) {
 
   if (action === "login") {
     const pin = String(body.pin ?? "");
-    if (!verifyAdminPin(pin)) {
+    const role = resolveAdminPin(pin);
+    if (!role) {
       return NextResponse.json({ error: "PIN incorrect." }, { status: 401 });
     }
-    await setAdminCookie();
-    return NextResponse.json({ ok: true });
+    await setAdminCookie(role);
+    return NextResponse.json({ ok: true, role });
   }
 
   if (action === "logout") {

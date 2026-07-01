@@ -17,7 +17,11 @@ import { matchesPaidMember, memberKey, parsePaidMembersImport } from "@/lib/memb
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type {
   Attendance,
+  BillingSessionRow,
+  BillingSessionSnapshot,
   BureauStats,
+  MonthBillingPreview,
+  MonthValidation,
   PaidMember,
   Participant,
   RankingEntry,
@@ -25,6 +29,7 @@ import type {
   Season,
   Session,
   SessionWithMeta,
+  TreasurerEmail,
 } from "@/lib/types";
 
 export async function getActiveSeason(): Promise<Season | null> {
@@ -747,5 +752,328 @@ export async function getMonthRegistrationsReport(year: number, monthIndex: numb
     month: monthIndex,
     sessions: enriched,
   };
+}
+
+type TreasurerEmailRow = {
+  id: string;
+  email: string;
+  label: string | null;
+  created_at: string;
+};
+
+type MonthValidationRow = {
+  id: string;
+  season_id: string;
+  year: number;
+  month: number;
+  computed_session_count: number;
+  billed_session_count: number;
+  billing_note: string | null;
+  session_snapshot: BillingSessionSnapshot[];
+  last_sent_at: string | null;
+  send_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapTreasurerEmail(row: TreasurerEmailRow): TreasurerEmail {
+  return {
+    id: row.id,
+    email: row.email,
+    label: row.label,
+    createdAt: row.created_at,
+  };
+}
+
+function mapMonthValidation(row: MonthValidationRow): MonthValidation {
+  return {
+    id: row.id,
+    seasonId: row.season_id,
+    year: row.year,
+    month: row.month,
+    computedSessionCount: row.computed_session_count,
+    billedSessionCount: row.billed_session_count,
+    billingNote: row.billing_note,
+    sessionSnapshot: row.session_snapshot ?? [],
+    lastSentAt: row.last_sent_at,
+    sendCount: row.send_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listTreasurerEmails(): Promise<TreasurerEmail[]> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_treasurer_emails")
+    .select("*")
+    .order("email", { ascending: true });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []).map((row) => mapTreasurerEmail(row as TreasurerEmailRow));
+}
+
+export async function addTreasurerEmail(email: string, label?: string | null) {
+  const supabase = getSupabaseAdmin();
+  const normalized = email.trim().toLowerCase();
+  if (!normalized || !normalized.includes("@")) {
+    throw new Error("INVALID_EMAIL");
+  }
+  const { data, error } = await supabase
+    .from("ppg_treasurer_emails")
+    .insert({ email: normalized, label: label?.trim() || null })
+    .select("*")
+    .single();
+  if (error) {
+    throw error;
+  }
+  return mapTreasurerEmail(data as TreasurerEmailRow);
+}
+
+export async function removeTreasurerEmail(id: string) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("ppg_treasurer_emails").delete().eq("id", id);
+  if (error) {
+    throw error;
+  }
+}
+
+export async function getMonthValidation(seasonId: string, year: number, month: number) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_month_validations")
+    .select("*")
+    .eq("season_id", seasonId)
+    .eq("year", year)
+    .eq("month", month)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return data ? mapMonthValidation(data as MonthValidationRow) : null;
+}
+
+export async function listMonthValidations(seasonId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_month_validations")
+    .select("*")
+    .eq("season_id", seasonId)
+    .order("year", { ascending: true })
+    .order("month", { ascending: true });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []).map((row) => mapMonthValidation(row as MonthValidationRow));
+}
+
+async function buildBillingSessionRow(
+  session: Session,
+  season: Season,
+): Promise<BillingSessionRow> {
+  const [registered, attendance] = await Promise.all([
+    getSessionParticipants(session.id),
+    getAttendanceForSession(session.id),
+  ]);
+
+  const attendanceByParticipant = new Map(attendance.map((record) => [record.participantId, record]));
+  const issues: string[] = [];
+  const past = isSessionPast(session.sessionDate, season.endTime);
+  const presentParticipants = registered
+    .filter((participant) => attendanceByParticipant.get(participant.id)?.status === "present")
+    .map((participant) => ({
+      firstName: participant.firstName,
+      lastName: participant.lastName,
+    }));
+
+  let attendanceComplete = true;
+  if (past && session.status === "scheduled" && registered.length > 0) {
+    for (const participant of registered) {
+      if (!attendanceByParticipant.has(participant.id)) {
+        attendanceComplete = false;
+        issues.push(`Présence non renseignée pour ${participant.firstName} ${participant.lastName}`);
+      }
+    }
+  }
+
+  if (past && session.status === "scheduled" && registered.length > 0 && !attendanceComplete) {
+    issues.push("Feuille de présence incomplète");
+  }
+
+  const isRealized =
+    past && session.status === "scheduled" && attendanceComplete && presentParticipants.length >= 1;
+
+  return {
+    id: session.id,
+    sessionDate: session.sessionDate,
+    theme: session.theme,
+    status: session.status,
+    registeredCount: registered.length,
+    presentCount: presentParticipants.length,
+    attendanceComplete,
+    isRealized,
+    presentParticipants,
+    issues,
+  };
+}
+
+export async function getMonthBillingPreview(year: number, monthIndex: number): Promise<MonthBillingPreview> {
+  const season = await getActiveSeason();
+  if (!season) {
+    throw new Error("NO_SEASON");
+  }
+
+  const monthKey = toMonthKey(year, monthIndex);
+  const sessions = (await getSessionsForSeason(season.id)).filter((session) =>
+    session.sessionDate.startsWith(monthKey),
+  );
+
+  const rows = await Promise.all(sessions.map((session) => buildBillingSessionRow(session, season)));
+  const realizedSessions: BillingSessionSnapshot[] = rows
+    .filter((row) => row.isRealized)
+    .map((row) => ({
+      id: row.id,
+      sessionDate: row.sessionDate,
+      theme: row.theme,
+      presentCount: row.presentCount,
+      presentParticipants: row.presentParticipants,
+    }));
+
+  const blockingIssues = rows.flatMap((row) => {
+    if (!isSessionPast(row.sessionDate, season.endTime)) {
+      return [];
+    }
+    if (row.status !== "scheduled") {
+      return [];
+    }
+    if (row.registeredCount === 0) {
+      return [];
+    }
+    if (!row.attendanceComplete) {
+      return [`${row.sessionDate} : présences incomplètes`];
+    }
+    return [];
+  });
+
+  const lastValidation = await getMonthValidation(season.id, year, monthIndex + 1);
+
+  return {
+    season,
+    monthLabel: formatMonthYear(year, monthIndex),
+    year,
+    month: monthIndex,
+    sessions: rows,
+    realizedSessions,
+    computedSessionCount: realizedSessions.length,
+    blockingIssues,
+    canValidate: blockingIssues.length === 0,
+    lastValidation,
+  };
+}
+
+export async function saveAndSendMonthValidation(input: {
+  year: number;
+  monthIndex: number;
+  billedSessionCount: number;
+  billingNote?: string | null;
+  sendEmail: boolean;
+}) {
+  const preview = await getMonthBillingPreview(input.year, input.monthIndex);
+  if (!preview.canValidate) {
+    throw new Error("BLOCKING_ISSUES");
+  }
+
+  if (input.billedSessionCount < 0 || !Number.isFinite(input.billedSessionCount)) {
+    throw new Error("INVALID_BILLED_COUNT");
+  }
+
+  const month = input.monthIndex + 1;
+  const existing = await getMonthValidation(preview.season.id, input.year, month);
+  const isResend = Boolean(existing?.lastSentAt);
+
+  const supabase = getSupabaseAdmin();
+  const payload = {
+    season_id: preview.season.id,
+    year: input.year,
+    month,
+    computed_session_count: preview.computedSessionCount,
+    billed_session_count: input.billedSessionCount,
+    billing_note: input.billingNote?.trim() || null,
+    session_snapshot: preview.realizedSessions,
+    updated_at: new Date().toISOString(),
+  };
+
+  let validation: MonthValidation;
+  if (existing) {
+    const { data, error } = await supabase
+      .from("ppg_month_validations")
+      .update(payload)
+      .eq("id", existing.id)
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    validation = mapMonthValidation(data as MonthValidationRow);
+  } else {
+    const { data, error } = await supabase
+      .from("ppg_month_validations")
+      .insert(payload)
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    validation = mapMonthValidation(data as MonthValidationRow);
+  }
+
+  if (input.sendEmail) {
+    const treasurers = await listTreasurerEmails();
+    if (treasurers.length === 0) {
+      throw new Error("NO_TREASURERS");
+    }
+
+    const { buildBillingValidationPdf } = await import("@/lib/billing-export-pdf");
+    const { sendBillingValidationEmail } = await import("@/lib/email");
+
+    const pdfBytes = await buildBillingValidationPdf({
+      season: preview.season,
+      monthLabel: preview.monthLabel,
+      computedSessionCount: preview.computedSessionCount,
+      billedSessionCount: input.billedSessionCount,
+      billingNote: input.billingNote?.trim() || null,
+      realizedSessions: preview.realizedSessions,
+    });
+
+    const filename = `ppg-facturation-${input.year}-${String(month).padStart(2, "0")}.pdf`;
+    await sendBillingValidationEmail({
+      to: treasurers.map((item) => item.email),
+      monthLabel: preview.monthLabel,
+      billedSessionCount: input.billedSessionCount,
+      computedSessionCount: preview.computedSessionCount,
+      billingNote: input.billingNote?.trim() || null,
+      pdfBytes,
+      filename,
+      isResend,
+    });
+
+    const { data, error } = await supabase
+      .from("ppg_month_validations")
+      .update({
+        last_sent_at: new Date().toISOString(),
+        send_count: (existing?.sendCount ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", validation.id)
+      .select("*")
+      .single();
+    if (error) {
+      throw error;
+    }
+    validation = mapMonthValidation(data as MonthValidationRow);
+  }
+
+  return { preview, validation, isResend };
 }
 

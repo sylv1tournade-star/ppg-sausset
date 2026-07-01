@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatMonthYear, formatParisShortDate, parseMonthKey } from "@/lib/calendar";
 import type { Attendance, BureauStats, PaidMember, Season, Session } from "@/lib/types";
@@ -14,6 +15,7 @@ type AddableParticipantRow = ParticipantRow;
 
 export default function AdminPage() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [season, setSeason] = useState<Season | null>(null);
@@ -43,6 +45,7 @@ export default function AdminPage() {
     const ping = await fetch("/api/admin?action=ping");
     const pingData = await ping.json();
     setIsAdmin(Boolean(pingData.admin));
+    setIsSuperAdmin(Boolean(pingData.superAdmin));
     if (!pingData.admin) {
       return;
     }
@@ -264,7 +267,7 @@ export default function AdminPage() {
       <div className="container max-w-md">
         <section className="card p-6">
           <h1 className="text-2xl font-bold">Admin PPG</h1>
-          <p className="muted mt-2">Accès réservé à Manon et au bureau.</p>
+          <p className="muted mt-2">Accès réservé à Manon (coach) et à Suzanne (responsable PPG).</p>
           <form className="mt-6 space-y-4" onSubmit={login}>
             <label className="block space-y-1">
               <span className="text-sm font-medium">PIN admin</span>
@@ -294,6 +297,13 @@ export default function AdminPage() {
     <div className="container space-y-6">
       <section className="card p-6">
         <h1 className="text-2xl font-bold">Administration PPG</h1>
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          {isSuperAdmin ? (
+            <Link href="/admin/facturation" className="btn btn-secondary text-sm">
+              Facturation trésoriers
+            </Link>
+          ) : null}
+        </div>
         {season ? (
           <p className="muted mt-2">
             Saison active {season.label} · {formatParisShortDate(`${season.startYear}-09-01`)} → jeudis générés

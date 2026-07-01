@@ -4,7 +4,10 @@ import { cookies } from "next/headers";
 export const PARTICIPANT_COOKIE = "ppg_token";
 export const ADMIN_COOKIE = "ppg_admin";
 
+export type AdminRole = "admin" | "super_admin";
+
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+const ADMIN_COOKIE_MAX_AGE = 60 * 60 * 8;
 
 export function generateAccessToken() {
   return randomBytes(16).toString("base64url");
@@ -31,14 +34,14 @@ export async function getParticipantToken() {
   return jar.get(PARTICIPANT_COOKIE)?.value ?? null;
 }
 
-export async function setAdminCookie() {
+export async function setAdminCookie(role: AdminRole) {
   const jar = await cookies();
-  jar.set(ADMIN_COOKIE, "1", {
+  jar.set(ADMIN_COOKIE, role === "super_admin" ? "super" : "1", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: 60 * 60 * 8,
+    maxAge: ADMIN_COOKIE_MAX_AGE,
   });
 }
 
@@ -47,14 +50,41 @@ export async function clearAdminCookie() {
   jar.delete(ADMIN_COOKIE);
 }
 
-export async function isAdminAuthenticated() {
+export async function getAdminRole(): Promise<AdminRole | null> {
   const jar = await cookies();
-  return jar.get(ADMIN_COOKIE)?.value === "1";
+  const value = jar.get(ADMIN_COOKIE)?.value;
+  if (value === "super") {
+    return "super_admin";
+  }
+  if (value === "1") {
+    return "admin";
+  }
+  return null;
+}
+
+export async function isAdminAuthenticated() {
+  return (await getAdminRole()) !== null;
+}
+
+export async function isSuperAdminAuthenticated() {
+  return (await getAdminRole()) === "super_admin";
+}
+
+export function resolveAdminPin(pin: string): AdminRole | null {
+  const superPin = process.env.PPG_SUPER_ADMIN_PIN ?? "";
+  const adminPin = process.env.PPG_ADMIN_PIN ?? "";
+
+  if (superPin.length > 0 && pin === superPin) {
+    return "super_admin";
+  }
+  if (adminPin.length > 0 && pin === adminPin) {
+    return "admin";
+  }
+  return null;
 }
 
 export function verifyAdminPin(pin: string) {
-  const expected = process.env.PPG_ADMIN_PIN ?? "";
-  return expected.length > 0 && pin === expected;
+  return resolveAdminPin(pin) !== null;
 }
 
 export function getAppUrl() {
