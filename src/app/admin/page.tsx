@@ -31,6 +31,7 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
   const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
   const [exportingMonth, setExportingMonth] = useState<string | null>(null);
+  const [superAdminConfigured, setSuperAdminConfigured] = useState(true);
 
   const seasonMonthKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -45,6 +46,7 @@ export default function AdminPage() {
     const pingData = await ping.json();
     setIsAdmin(Boolean(pingData.admin));
     setIsSuperAdmin(Boolean(pingData.superAdmin));
+    setSuperAdminConfigured(pingData.superAdminConfigured !== false);
     if (!pingData.admin) {
       return;
     }
@@ -75,7 +77,7 @@ export default function AdminPage() {
       const response = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "login", pin }),
+        body: JSON.stringify({ action: "login", pin: pin.trim() }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -84,6 +86,24 @@ export default function AdminPage() {
       await refreshAdmin();
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function adminLogout() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await fetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "logout" }),
+      });
+      setIsAdmin(false);
+      setIsSuperAdmin(false);
+      setPin("");
     } finally {
       setBusy(false);
     }
@@ -235,11 +255,24 @@ export default function AdminPage() {
         <section className="card p-6">
           <h1 className="text-2xl font-bold">Admin PPG</h1>
           <p className="muted mt-2">Accès coach (Manon) ou responsable PPG (Suzanne).</p>
+          {!superAdminConfigured ? (
+            <p className="mt-3 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">
+              Le PIN responsable PPG n&apos;est pas encore configuré sur le serveur (variable{" "}
+              <code className="text-xs">PPG_SUPER_ADMIN_PIN</code> sur Vercel + redéploiement).
+            </p>
+          ) : null}
           <form className="mt-6 space-y-4" onSubmit={login}>
             <label className="block space-y-1">
-              <span className="text-sm font-medium">PIN admin</span>
-              <input className="input" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="current-password" />
+              <span className="text-sm font-medium">PIN</span>
+              <input
+                className="input"
+                type="password"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                autoComplete="current-password"
+              />
             </label>
+            <p className="muted text-xs">Lettres ou chiffres — le PIN Suzanne ouvre aussi la facturation.</p>
             {error ? <p className="text-sm text-[var(--danger)]">{error}</p> : null}
             <button type="submit" className="btn btn-primary" disabled={busy}>
               {busy ? "..." : "Entrer"}
@@ -270,6 +303,9 @@ export default function AdminPage() {
               Facturation & adhérents
             </Link>
           ) : null}
+          <button type="button" className="btn btn-secondary text-sm" onClick={adminLogout} disabled={busy}>
+            Se déconnecter
+          </button>
         </div>
         {isSuperAdmin ? (
           season ? (

@@ -376,12 +376,32 @@ export default function FacturationPage() {
           <h1 className="text-2xl font-bold">Facturation PPG</h1>
           <p className="muted mt-2">
             {role === "admin"
-              ? "Cet espace est réservé à Suzanne (responsable PPG)."
-              : "Connectez-vous avec le PIN responsable PPG."}
+              ? "Vous êtes connectée en mode coach (Manon). Déconnectez-vous puis reconnectez-vous avec le PIN responsable PPG (Suzanne)."
+              : "Connectez-vous d'abord sur la page Admin avec le PIN responsable PPG."}
           </p>
-          <Link href="/admin" className="btn btn-primary mt-4">
-            Retour à l&apos;admin
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link href="/admin" className="btn btn-primary">
+              Aller à l&apos;admin
+            </Link>
+            {role === "admin" ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await fetch("/api/admin", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "logout" }),
+                  });
+                  window.location.href = "/admin";
+                }}
+              >
+                Se déconnecter
+              </button>
+            ) : null}
+          </div>
         </section>
       </div>
     );

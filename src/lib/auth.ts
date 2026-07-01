@@ -71,13 +71,14 @@ export async function isSuperAdminAuthenticated() {
 }
 
 export function resolveAdminPin(pin: string): AdminRole | null {
-  const superPin = process.env.PPG_SUPER_ADMIN_PIN ?? "";
-  const adminPin = process.env.PPG_ADMIN_PIN ?? "";
+  const normalizedPin = pin.trim();
+  const superPin = (process.env.PPG_SUPER_ADMIN_PIN ?? "").trim();
+  const adminPin = (process.env.PPG_ADMIN_PIN ?? "").trim();
 
-  if (superPin.length > 0 && pin === superPin) {
+  if (superPin.length > 0 && normalizedPin === superPin) {
     return "super_admin";
   }
-  if (adminPin.length > 0 && pin === adminPin) {
+  if (adminPin.length > 0 && normalizedPin === adminPin) {
     return "admin";
   }
   return null;

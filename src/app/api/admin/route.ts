@@ -56,6 +56,7 @@ export async function GET(request: Request) {
       admin: role !== null,
       role,
       superAdmin: role === "super_admin",
+      superAdminConfigured: Boolean((process.env.PPG_SUPER_ADMIN_PIN ?? "").trim()),
     });
   }
 
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
   const action = String(body.action ?? "");
 
   if (action === "login") {
-    const pin = String(body.pin ?? "");
+    const pin = String(body.pin ?? "").trim();
     const role = resolveAdminPin(pin);
     if (!role) {
       return NextResponse.json({ error: "PIN incorrect." }, { status: 401 });
