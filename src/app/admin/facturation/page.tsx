@@ -14,23 +14,11 @@ import type {
   TreasurerEmail,
 } from "@/lib/types";
 
-const RECIPIENT_SECTIONS: Array<{ type: BillingRecipientType; title: string; hint: string }> = [
-  {
-    type: "treasurer",
-    title: "Trésoriers",
-    hint: "Destinataires principaux du PDF de facturation.",
-  },
-  {
-    type: "coach",
-    title: "Manon (coach)",
-    hint: "Reçoit une copie de l'e-mail de validation.",
-  },
-  {
-    type: "billing_manager",
-    title: "Suzanne (responsable PPG)",
-    hint: "Reçoit une copie + le rappel après le dernier jeudi du mois.",
-  },
-];
+const RECIPIENT_LABELS: Record<BillingRecipientType, string> = {
+  treasurer: "Trésorier",
+  coach: "Manon (copie)",
+  billing_manager: "Suzanne (copie + rappel)",
+};
 
 function initialStatuses(preview: MonthBillingPreview) {
   const statusMap: Record<string, BillingAccountingStatus> = {};
@@ -74,6 +62,7 @@ export default function FacturationPage() {
   const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
   const [importRaw, setImportRaw] = useState("");
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
+  const [showRecipientEditor, setShowRecipientEditor] = useState(false);
 
   async function refresh() {
     const ping = await fetch("/api/admin?action=ping");
@@ -514,70 +503,83 @@ export default function FacturationPage() {
         ) : null}
       </section>
 
-      {RECIPIENT_SECTIONS.map((section) => (
-        <section key={section.type} className="card p-6">
-          <h2 className="text-xl font-bold">{section.title}</h2>
-          <p className="muted mt-2 text-sm">{section.hint}</p>
-          <ul className="mt-4 space-y-2">
-            {recipientsByType[section.type].length === 0 ? (
-              <li className="muted text-sm">Aucun e-mail configuré.</li>
-            ) : (
-              recipientsByType[section.type].map((recipient) => (
-                <li
-                  key={recipient.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[var(--bg)] px-3 py-2"
-                >
-                  <span>
-                    {recipient.email}
-                    {recipient.label ? <span className="muted text-sm"> · {recipient.label}</span> : null}
-                  </span>
-                  <button type="button" className="btn btn-danger text-xs" onClick={() => removeRecipient(recipient.id)}>
-                    Retirer
-                  </button>
-                </li>
-              ))
-            )}
-          </ul>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <input
-              className="input min-w-[14rem] flex-1"
-              type="email"
-              placeholder="E-mail"
-              value={newEmails[section.type].email}
-              onChange={(event) =>
-                setNewEmails((current) => ({
-                  ...current,
-                  [section.type]: { ...current[section.type], email: event.target.value },
-                }))
-              }
-            />
-            <input
-              className="input min-w-[10rem]"
-              placeholder="Libellé (optionnel)"
-              value={newEmails[section.type].label}
-              onChange={(event) =>
-                setNewEmails((current) => ({
-                  ...current,
-                  [section.type]: { ...current[section.type], label: event.target.value },
-                }))
-              }
-            />
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !newEmails[section.type].email.trim()}
-              onClick={() => addRecipient(section.type)}
-            >
-              Ajouter
-            </button>
+      <section className="card p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold">E-mails de notification</h2>
+            <p className="muted mt-1 text-sm">Trésorier (principal), Manon et Suzanne en copie.</p>
           </div>
-        </section>
-      ))}
+          <button
+            type="button"
+            className="btn btn-secondary text-sm"
+            onClick={() => setShowRecipientEditor((open) => !open)}
+          >
+            {showRecipientEditor ? "Fermer" : "Modifier / ajouter"}
+          </button>
+        </div>
+        <ul className="mt-4 space-y-2">
+          {(["treasurer", "coach", "billing_manager"] as BillingRecipientType[]).map((type) => {
+            const items = recipientsByType[type];
+            return (
+              <li key={type} className="rounded-xl bg-[var(--bg)] px-3 py-2 text-sm">
+                <span className="font-medium">{RECIPIENT_LABELS[type]} : </span>
+                {items.length === 0 ? (
+                  <span className="muted">non configuré</span>
+                ) : (
+                  items.map((recipient) => recipient.email).join(", ")
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {showRecipientEditor ? (
+          <div className="mt-4 space-y-4 border-t border-[var(--border)] pt-4">
+            {(["treasurer", "coach", "billing_manager"] as BillingRecipientType[]).map((type) => (
+              <div key={type}>
+                <p className="text-sm font-semibold">{RECIPIENT_LABELS[type]}</p>
+                <ul className="mt-2 space-y-1">
+                  {recipientsByType[type].map((recipient) => (
+                    <li key={recipient.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                      <span>{recipient.email}</span>
+                      <button type="button" className="btn btn-danger text-xs" onClick={() => removeRecipient(recipient.id)}>
+                        Retirer
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <input
+                    className="input min-w-[14rem] flex-1"
+                    type="email"
+                    placeholder="E-mail"
+                    value={newEmails[type].email}
+                    onChange={(event) =>
+                      setNewEmails((current) => ({
+                        ...current,
+                        [type]: { ...current[type], email: event.target.value },
+                      }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy || !newEmails[type].email.trim()}
+                    onClick={() => addRecipient(type)}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
 
       <section className="card p-6">
         <h2 className="text-xl font-bold">Valider les cours du mois</h2>
         <p className="muted mt-2 text-sm">
-          Pour chaque séance, le statut est pré-rempli automatiquement. Vous pouvez le corriger avant validation.
+          Cliquez <strong className="text-[var(--ink)]">Vérifier</strong> pour revoir le détail du mois. Aucun e-mail
+          n&apos;est envoyé tant que vous n&apos;avez pas confirmé <strong className="text-[var(--ink)]">Valider et envoyer</strong>.
         </p>
         <ul className="mt-4 space-y-2">
           {sortedMonthKeys.map((monthKey) => {
@@ -600,7 +602,7 @@ export default function FacturationPage() {
                   )}
                 </div>
                 <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openPreview(monthKey)}>
-                  {validation?.lastSentAt ? "Modifier / renvoyer" : "Valider"}
+                  {validation?.lastSentAt ? "Revérifier" : "Vérifier"}
                 </button>
               </li>
             );
@@ -610,7 +612,11 @@ export default function FacturationPage() {
 
       {preview && previewMonthKey ? (
         <section className="card p-6">
-          <h2 className="text-xl font-bold capitalize">Validation — {preview.monthLabel}</h2>
+          <h2 className="text-xl font-bold capitalize">Revue — {preview.monthLabel}</h2>
+          <p className="muted mt-2 text-sm">
+            Vérifiez chaque séance ci-dessous. L&apos;e-mail part uniquement si vous cliquez sur « Valider et envoyer »
+            et confirmez.
+          </p>
 
           {!preview.canValidate ? (
             <p className="mt-4 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">

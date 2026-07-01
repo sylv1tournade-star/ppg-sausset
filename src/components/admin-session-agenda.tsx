@@ -18,23 +18,17 @@ import type { Season, Session } from "@/lib/types";
 type Props = {
   season: Season;
   sessions: Session[];
-  isSuperAdmin: boolean;
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onUpdateSession: (sessionId: string, patch: Partial<Session>) => void;
-  onOpenAttendance?: (sessionId: string) => void;
 };
 
 function SessionEditPanel({
   session,
-  isSuperAdmin,
   onUpdateSession,
-  onOpenAttendance,
 }: {
   session: Session;
-  isSuperAdmin: boolean;
   onUpdateSession: (sessionId: string, patch: Partial<Session>) => void;
-  onOpenAttendance?: (sessionId: string) => void;
 }) {
   const [theme, setTheme] = useState(session.theme ?? "");
   const [notes, setNotes] = useState(session.notes ?? "");
@@ -90,11 +84,6 @@ function SessionEditPanel({
           }}
         />
       </label>
-      {isSuperAdmin && onOpenAttendance ? (
-        <button type="button" className="btn btn-secondary mt-3" onClick={() => onOpenAttendance(session.id)}>
-          Feuille de présence
-        </button>
-      ) : null}
     </article>
   );
 }
@@ -102,11 +91,9 @@ function SessionEditPanel({
 export function AdminSessionAgenda({
   season,
   sessions,
-  isSuperAdmin,
   selectedSessionId,
   onSelectSession,
   onUpdateSession,
-  onOpenAttendance,
 }: Props) {
   const sessionDates = useMemo(() => sessions.map((session) => session.sessionDate), [sessions]);
   const [monthKey, setMonthKey] = useState(() => pickAgendaMonthKey(sessionDates));
@@ -173,22 +160,22 @@ export function AdminSessionAgenda({
   const dayLabel = formatDayOfWeekLongCapitalized(season.dayOfWeek);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]">
-      <div>
-        <div className="flex items-center justify-between gap-3">
+    <div className="space-y-5">
+      <div className="max-w-md">
+        <div className="flex items-center justify-between gap-2">
           <button
             type="button"
-            className="btn btn-secondary px-3"
+            className="btn btn-secondary shrink-0 px-3"
             onClick={() => goMonth(-1)}
             disabled={!canGoPrev}
             aria-label="Mois précédent"
           >
             ←
           </button>
-          <h3 className="text-center text-lg font-bold capitalize">{formatMonthYear(year, month)}</h3>
+          <h3 className="min-w-0 flex-1 text-center text-lg font-bold capitalize">{formatMonthYear(year, month)}</h3>
           <button
             type="button"
-            className="btn btn-secondary px-3"
+            className="btn btn-secondary shrink-0 px-3"
             onClick={() => goMonth(1)}
             disabled={!canGoNext}
             aria-label="Mois suivant"
@@ -215,7 +202,6 @@ export function AdminSessionAgenda({
                   {formatParisShortDate(session.sessionDate)}
                   {session.status === "cancelled" ? " · annulée" : ""}
                   {session.status === "rescheduled" ? " · reportée" : ""}
-                  {session.theme?.trim() ? ` · ${session.theme.trim()}` : ""}
                 </button>
               );
             })}
@@ -276,10 +262,8 @@ export function AdminSessionAgenda({
                 title={session.theme ?? session.notes ?? undefined}
               >
                 <span>{cell.day}</span>
-                {session.theme?.trim() ? (
-                  <span className={`mt-0.5 line-clamp-1 px-0.5 text-[9px] font-normal ${isSelected ? "text-white/90" : ""}`}>
-                    ●
-                  </span>
+                {session.theme?.trim() || session.notes?.trim() ? (
+                  <span className={`mt-0.5 text-[9px] ${isSelected ? "text-white/90" : ""}`}>●</span>
                 ) : null}
               </button>
             );
@@ -287,24 +271,17 @@ export function AdminSessionAgenda({
         </div>
 
         <p className="muted mt-3 text-xs">
-          Agenda ouvert sur le mois en cours. Touchez un {dayLabel} coloré pour modifier thème et consignes.
+          Mois en cours par défaut. Touchez un {dayLabel.toLowerCase()} coloré pour le modifier.
         </p>
       </div>
 
-      <div className="lg:sticky lg:top-24 lg:self-start">
-        {selected ? (
-          <SessionEditPanel
-            session={selected}
-            isSuperAdmin={isSuperAdmin}
-            onUpdateSession={onUpdateSession}
-            onOpenAttendance={onOpenAttendance}
-          />
-        ) : (
-          <p className="muted rounded-xl border border-dashed border-[var(--border)] p-4 text-sm">
-            Sélectionnez une séance dans le calendrier.
-          </p>
-        )}
-      </div>
+      {selected ? (
+        <SessionEditPanel session={selected} onUpdateSession={onUpdateSession} />
+      ) : (
+        <p className="muted rounded-xl border border-dashed border-[var(--border)] p-4 text-sm">
+          Sélectionnez une séance dans le calendrier.
+        </p>
+      )}
     </div>
   );
 }

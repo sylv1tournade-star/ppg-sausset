@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminSessionAgenda } from "@/components/admin-session-agenda";
 import { formatDayOfWeekLongCapitalized, formatMonthYear, formatParisShortDate, formatSeasonScheduleTagline, parseMonthKey, pickAgendaMonthKey } from "@/lib/calendar";
-import type { Attendance, BureauStats, PaidMember, Season, Session } from "@/lib/types";
+import type { Attendance, BureauStats, Season, Session } from "@/lib/types";
 
 type ParticipantRow = {
   id: string;
@@ -34,7 +34,6 @@ export default function AdminPage() {
   const [endTime, setEndTime] = useState("20:00");
   const [location, setLocation] = useState("Sausset-les-Pins");
   const [busy, setBusy] = useState(false);
-  const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
   const [exportingMonth, setExportingMonth] = useState<string | null>(null);
   const [superAdminConfigured, setSuperAdminConfigured] = useState(true);
 
@@ -56,23 +55,36 @@ export default function AdminPage() {
       return;
     }
 
-    const [main, statsResponse, membersResponse] = await Promise.all([
+    const [main, statsResponse] = await Promise.all([
       fetch("/api/admin"),
       pingData.superAdmin ? fetch("/api/admin?action=stats") : Promise.resolve(null),
-      pingData.superAdmin ? fetch("/api/admin/billing?action=members") : Promise.resolve(null),
     ]);
     const mainData = await main.json();
     const statsData = statsResponse ? await statsResponse.json() : { stats: null };
-    const membersData = membersResponse ? await membersResponse.json() : { members: [] };
     setSeason(mainData.season ?? null);
     setSessions(mainData.sessions ?? []);
     setStats(statsData.stats ?? null);
-    setPaidMembers(membersData.members ?? []);
   }
 
   useEffect(() => {
     void refreshAdmin();
   }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin || !selectedSessionId) {
+      return;
+    }
+    void loadAttendance(selectedSessionId);
+  }, [isSuperAdmin, selectedSessionId]);
+
+  async function loadAttendance(sessionId: string) {
+    setAttendanceSearch("");
+    const response = await fetch(`/api/admin?sessionId=${sessionId}`);
+    const data = await response.json();
+    setParticipants(data.participants ?? []);
+    setAttendance(data.attendance ?? []);
+    setAddableParticipants(data.addable ?? []);
+  }
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
@@ -162,16 +174,6 @@ export default function AdminPage() {
     } else {
       setNotice(null);
     }
-  }
-
-  async function openAttendance(sessionId: string) {
-    setSelectedSessionId(sessionId);
-    setAttendanceSearch("");
-    const response = await fetch(`/api/admin?sessionId=${sessionId}`);
-    const data = await response.json();
-    setParticipants(data.participants ?? []);
-    setAttendance(data.attendance ?? []);
-    setAddableParticipants(data.addable ?? []);
   }
 
   async function markAttendance(participantId: string, status: Attendance["status"]) {
@@ -331,9 +333,12 @@ export default function AdminPage() {
           </p>
         )}
         {isSuperAdmin ? (
-          <div className="mt-4 space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
-            <p className="text-sm font-semibold">Créer une nouvelle saison</p>
-            <div className="flex flex-wrap items-end gap-3">
+          <details className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
+            <summary className="cursor-pointer text-sm font-semibold marker:content-none [&::-webkit-details-marker]:hidden">
+              Créer une nouvelle saison
+            </summary>
+            <div className="mt-4 space-y-4">
+              <div className="flex flex-wrap items-end gap-3">
               <label className="space-y-1">
                 <span className="text-sm font-medium">Année de début (septembre)</span>
                 <input
@@ -373,13 +378,14 @@ export default function AdminPage() {
               Les séances seront générées chaque {formatDayOfWeekLongCapitalized(dayOfWeek)} de septembre à juin. Le
               jour et l&apos;horaire s&apos;affichent sur tout le site pour la saison active.
             </p>
-          </div>
+            </div>
+          </details>
         ) : null}
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
         {notice ? <p className="mt-3 text-sm text-[var(--accent)]">{notice}</p> : null}
       </section>
 
-      <section className={isSuperAdmin ? "grid gap-6 lg:grid-cols-2" : ""}>
+      <section className="space-y-6">
         <div className="card p-6">
           <h2 className="text-xl font-bold">Séances — agenda</h2>
           {!season ? (
@@ -389,11 +395,9 @@ export default function AdminPage() {
               <AdminSessionAgenda
                 season={season}
                 sessions={sessions}
-                isSuperAdmin={isSuperAdmin}
                 selectedSessionId={selectedSessionId}
                 onSelectSession={setSelectedSessionId}
                 onUpdateSession={updateSession}
-                onOpenAttendance={isSuperAdmin ? openAttendance : undefined}
               />
             </div>
           )}
@@ -401,9 +405,18 @@ export default function AdminPage() {
 
         {isSuperAdmin ? (
         <div className="card p-6">
-          <h2 className="text-xl font-bold">Présence</h2>
+          <h2 className="text-xl font-bold">Présence le soir de la séance</h2>
+          <p className="muted mt-1 text-sm">
+            Marquez qui est venu sur place. Les inscriptions en ligne apparaissent ici une fois la séance sélectionnée
+            dans l&apos;agenda.
+          </p>
           {!selectedSession ? (
-            <p className="muted mt-2">Sélectionnez une séance.</p>
+            <p className="muted mt-3 text-sm">Sélectionnez une date dans l&apos;agenda ci-dessus.</p>
+          ) : participants.length === 0 && addableParticipants.length === 0 ? (
+            <>
+              <p className="mt-2 font-medium">{formatParisShortDate(selectedSession.sessionDate)}</p>
+              <p className="muted mt-3 text-sm">Aucun inscrit en ligne pour cette séance.</p>
+            </>
           ) : (
             <>
               <p className="mt-2 font-medium">{formatParisShortDate(selectedSession.sessionDate)}</p>
@@ -489,28 +502,15 @@ export default function AdminPage() {
         ) : null}
       </section>
 
-      {isSuperAdmin ? (
-      <section className="card p-6">
-        <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
-        <p className="muted mt-2 text-sm">
-          Géré dans <Link href="/admin/facturation" className="font-semibold text-[var(--accent)]">Facturation & adhérents</Link>.
-        </p>
-        {paidMembers.length === 0 ? (
-          <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
-            Liste vide : les inscriptions publiques sont bloquées tant que Suzanne n&apos;a pas importé la liste.
-          </p>
-        ) : (
-          <p className="muted mt-3 text-sm">{paidMembers.length} adhérent(s) importé(s).</p>
-        )}
-      </section>
-      ) : null}
-
       {isSuperAdmin && stats ? (
-        <section className="card p-6">
-          <h2 className="text-xl font-bold">Stats bureau</h2>
+        <details className="card p-6 group">
+          <summary className="cursor-pointer list-none text-xl font-bold marker:content-none [&::-webkit-details-marker]:hidden">
+            Stats bureau
+          </summary>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div>
               <h3 className="font-semibold">Mois avec le plus d&apos;absences</h3>
+              <p className="muted mt-1 text-xs">Absences saisies par Suzanne lors des feuilles de présence.</p>
               <ul className="muted mt-2 space-y-1 text-sm">
                 {[...stats.months]
                   .sort((a, b) => b.absences - a.absences)
@@ -524,7 +524,8 @@ export default function AdminPage() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold">Dernières séances</h3>
+              <h3 className="font-semibold">5 dernières séances passées</h3>
+              <p className="muted mt-1 text-xs">Inscrits en ligne et taux de présents saisis ce soir-là.</p>
               <ul className="muted mt-2 space-y-1 text-sm">
                 {stats.sessions
                   .slice(-5)
@@ -538,7 +539,7 @@ export default function AdminPage() {
               </ul>
             </div>
           </div>
-        </section>
+        </details>
       ) : null}
 
       {isSuperAdmin ? (
