@@ -55,7 +55,13 @@ Copier `.env.local.example` → `.env.local`, puis renseigner les clés depuis
 - **Destinataires** configurables dans l'appli : trésoriers (principal), Manon (copie), Suzanne (copie + rappel)
 - **Rappel automatique** : e-mail à Suzanne après le dernier jeudi du mois (cron Vercel)
 
-Migration SQL : `supabase/migration_billing.sql` puis `supabase/migration_billing_v2.sql`
+Migration SQL : `supabase/migration_billing.sql` puis `supabase/migration_billing_v2.sql` puis `supabase/migration_rls.sql`
+
+Ou tout appliquer d'un coup : `python scripts/setup_supabase.py`
+
+## Sécurité Supabase (RLS)
+
+Toutes les tables `ppg_*` ont **Row Level Security** activée. L'accès direct via la clé anon/publishable est bloqué ; seule l'API Next.js (clé `service_role` côté serveur) accède aux données.
 
 ## Configuration Brevo
 

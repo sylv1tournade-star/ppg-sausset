@@ -109,3 +109,36 @@ create table if not exists ppg_month_reminders (
   sent_at timestamptz not null default now(),
   unique (season_id, year, month)
 );
+
+-- Row Level Security : bloquer l'accès direct via la clé anon/publishable.
+-- L'app Next.js utilise uniquement service_role côté serveur.
+
+alter table ppg_seasons enable row level security;
+alter table ppg_sessions enable row level security;
+alter table ppg_participants enable row level security;
+alter table ppg_registrations enable row level security;
+alter table ppg_attendance enable row level security;
+alter table ppg_paid_members enable row level security;
+alter table ppg_treasurer_emails enable row level security;
+alter table ppg_month_validations enable row level security;
+alter table ppg_month_reminders enable row level security;
+
+alter table ppg_seasons force row level security;
+alter table ppg_sessions force row level security;
+alter table ppg_participants force row level security;
+alter table ppg_registrations force row level security;
+alter table ppg_attendance force row level security;
+alter table ppg_paid_members force row level security;
+alter table ppg_treasurer_emails force row level security;
+alter table ppg_month_validations force row level security;
+alter table ppg_month_reminders force row level security;
+
+revoke all on table ppg_seasons from anon, authenticated;
+revoke all on table ppg_sessions from anon, authenticated;
+revoke all on table ppg_participants from anon, authenticated;
+revoke all on table ppg_registrations from anon, authenticated;
+revoke all on table ppg_attendance from anon, authenticated;
+revoke all on table ppg_paid_members from anon, authenticated;
+revoke all on table ppg_treasurer_emails from anon, authenticated;
+revoke all on table ppg_month_validations from anon, authenticated;
+revoke all on table ppg_month_reminders from anon, authenticated;
