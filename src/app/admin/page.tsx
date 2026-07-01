@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { formatMonthYear, formatParisShortDate, parseMonthKey } from "@/lib/calendar";
+import { formatDayOfWeekLongCapitalized, formatMonthYear, formatParisShortDate, formatSeasonScheduleTagline, parseMonthKey } from "@/lib/calendar";
 import type { Attendance, BureauStats, PaidMember, Season, Session } from "@/lib/types";
 
 type ParticipantRow = {
@@ -28,6 +28,10 @@ export default function AdminPage() {
   const [addableParticipants, setAddableParticipants] = useState<AddableParticipantRow[]>([]);
   const [attendanceSearch, setAttendanceSearch] = useState("");
   const [startYear, setStartYear] = useState(new Date().getFullYear());
+  const [dayOfWeek, setDayOfWeek] = useState(4);
+  const [startTime, setStartTime] = useState("19:00");
+  const [endTime, setEndTime] = useState("20:00");
+  const [location, setLocation] = useState("Sausset-les-Pins");
   const [busy, setBusy] = useState(false);
   const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
   const [exportingMonth, setExportingMonth] = useState<string | null>(null);
@@ -93,17 +97,14 @@ export default function AdminPage() {
 
   async function adminLogout() {
     setBusy(true);
-    setError(null);
-    setNotice(null);
     try {
       await fetch("/api/admin", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "logout" }),
       });
-      setIsAdmin(false);
-      setIsSuperAdmin(false);
-      setPin("");
+      window.location.href = "/admin";
     } finally {
       setBusy(false);
     }
@@ -116,7 +117,14 @@ export default function AdminPage() {
       const response = await fetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "season.create", startYear }),
+        body: JSON.stringify({
+          action: "season.create",
+          startYear,
+          dayOfWeek,
+          startTime,
+          endTime,
+          location,
+        }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -310,7 +318,7 @@ export default function AdminPage() {
         {isSuperAdmin ? (
           season ? (
             <p className="muted mt-2">
-              Saison active {season.label} · {formatParisShortDate(`${season.startYear}-09-01`)} → jeudis générés
+              Saison active {season.label} · {formatSeasonScheduleTagline(season)}
             </p>
           ) : (
             <p className="muted mt-2">Aucune saison active.</p>
@@ -322,118 +330,53 @@ export default function AdminPage() {
           </p>
         )}
         {isSuperAdmin ? (
-          <div className="mt-4 flex flex-wrap items-end gap-3">
-            <label className="space-y-1">
-              <span className="text-sm font-medium">Année de début (septembre)</span>
-              <input
-                className="input"
-                type="number"
-                value={startYear}
-                onChange={(e) => setStartYear(Number(e.target.value))}
-              />
-            </label>
-            <button type="button" className="btn btn-primary" onClick={createSeason} disabled={busy}>
-              Créer la saison
-            </button>
+          <div className="mt-4 space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
+            <p className="text-sm font-semibold">Créer une nouvelle saison</p>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Année de début (septembre)</span>
+                <input
+                  className="input"
+                  type="number"
+                  value={startYear}
+                  onChange={(e) => setStartYear(Number(e.target.value))}
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Jour de la semaine</span>
+                <select className="input" value={dayOfWeek} onChange={(e) => setDayOfWeek(Number(e.target.value))}>
+                  {[1, 2, 3, 4, 5, 6, 0].map((value) => (
+                    <option key={value} value={value}>
+                      {formatDayOfWeekLongCapitalized(value)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Heure début</span>
+                <input className="input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              </label>
+              <label className="space-y-1">
+                <span className="text-sm font-medium">Heure fin</span>
+                <input className="input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+              </label>
+              <label className="min-w-[12rem] flex-1 space-y-1">
+                <span className="text-sm font-medium">Lieu</span>
+                <input className="input" value={location} onChange={(e) => setLocation(e.target.value)} />
+              </label>
+              <button type="button" className="btn btn-primary" onClick={createSeason} disabled={busy}>
+                Créer la saison
+              </button>
+            </div>
+            <p className="muted text-xs">
+              Les séances seront générées chaque {formatDayOfWeekLongCapitalized(dayOfWeek)} de septembre à juin. Le
+              jour et l&apos;horaire s&apos;affichent sur tout le site pour la saison active.
+            </p>
           </div>
         ) : null}
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
         {notice ? <p className="mt-3 text-sm text-[var(--accent)]">{notice}</p> : null}
       </section>
-
-      {isSuperAdmin ? (
-      <section className="card p-6">
-        <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
-        <p className="muted mt-2 text-sm">
-          Géré dans <Link href="/admin/facturation" className="font-semibold text-[var(--accent)]">Facturation & adhérents</Link>.
-        </p>
-        {paidMembers.length === 0 ? (
-          <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
-            Liste vide : les inscriptions publiques sont bloquées tant que Suzanne n&apos;a pas importé la liste.
-          </p>
-        ) : (
-          <p className="muted mt-3 text-sm">{paidMembers.length} adhérent(s) importé(s).</p>
-        )}
-      </section>
-      ) : null}
-
-      {isSuperAdmin && stats ? (
-        <section className="card p-6">
-          <h2 className="text-xl font-bold">Stats bureau</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div>
-              <h3 className="font-semibold">Mois avec le plus d&apos;absences</h3>
-              <ul className="muted mt-2 space-y-1 text-sm">
-                {[...stats.months]
-                  .sort((a, b) => b.absences - a.absences)
-                  .slice(0, 5)
-                  .map((month) => (
-                    <li key={month.month}>
-                      {month.month} · {month.absences} absence{month.absences > 1 ? "s" : ""} / {month.sessions} séance
-                      {month.sessions > 1 ? "s" : ""}
-                    </li>
-                  ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="font-semibold">Dernières séances</h3>
-              <ul className="muted mt-2 space-y-1 text-sm">
-                {stats.sessions
-                  .slice(-5)
-                  .reverse()
-                  .map((session) => (
-                    <li key={session.id}>
-                      {formatParisShortDate(session.sessionDate)} · {session.registered} inscrits ·{" "}
-                      {session.attendanceRate}% présents
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {isSuperAdmin ? (
-      <section className="card p-6">
-        <h2 className="text-xl font-bold">Éditions mensuelles</h2>
-        <p className="muted mt-2 text-sm">
-          Téléchargez un PDF listant, pour chaque séance du mois, les personnes inscrites (nom et prénom).
-        </p>
-        {seasonMonthKeys.length === 0 ? (
-          <p className="muted mt-4 text-sm">Aucune séance disponible pour la saison active.</p>
-        ) : (
-          <ul className="mt-4 space-y-2">
-            {seasonMonthKeys.map((monthKey) => {
-              const { year, month } = parseMonthKey(monthKey);
-              const label = formatMonthYear(year, month);
-              const monthSessions = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
-              const isExporting = exportingMonth === monthKey;
-              return (
-                <li
-                  key={monthKey}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
-                >
-                  <div>
-                    <p className="font-medium capitalize">{label}</p>
-                    <p className="muted text-sm">
-                      {monthSessions.length} séance{monthSessions.length > 1 ? "s" : ""}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={Boolean(exportingMonth)}
-                    onClick={() => downloadMonthPdf(monthKey)}
-                  >
-                    {isExporting ? "Génération…" : "Édition PDF"}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-      ) : null}
 
       <section className={isSuperAdmin ? "grid gap-6 lg:grid-cols-2" : ""}>
         <div className="card p-6">
@@ -568,6 +511,106 @@ export default function AdminPage() {
         </div>
         ) : null}
       </section>
+
+      {isSuperAdmin ? (
+      <section className="card p-6">
+        <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
+        <p className="muted mt-2 text-sm">
+          Géré dans <Link href="/admin/facturation" className="font-semibold text-[var(--accent)]">Facturation & adhérents</Link>.
+        </p>
+        {paidMembers.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
+            Liste vide : les inscriptions publiques sont bloquées tant que Suzanne n&apos;a pas importé la liste.
+          </p>
+        ) : (
+          <p className="muted mt-3 text-sm">{paidMembers.length} adhérent(s) importé(s).</p>
+        )}
+      </section>
+      ) : null}
+
+      {isSuperAdmin && stats ? (
+        <section className="card p-6">
+          <h2 className="text-xl font-bold">Stats bureau</h2>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <h3 className="font-semibold">Mois avec le plus d&apos;absences</h3>
+              <ul className="muted mt-2 space-y-1 text-sm">
+                {[...stats.months]
+                  .sort((a, b) => b.absences - a.absences)
+                  .slice(0, 5)
+                  .map((month) => (
+                    <li key={month.month}>
+                      {month.month} · {month.absences} absence{month.absences > 1 ? "s" : ""} / {month.sessions} séance
+                      {month.sessions > 1 ? "s" : ""}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-semibold">Dernières séances</h3>
+              <ul className="muted mt-2 space-y-1 text-sm">
+                {stats.sessions
+                  .slice(-5)
+                  .reverse()
+                  .map((session) => (
+                    <li key={session.id}>
+                      {formatParisShortDate(session.sessionDate)} · {session.registered} inscrits ·{" "}
+                      {session.attendanceRate}% présents
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {isSuperAdmin ? (
+      <details className="card p-6 group">
+        <summary className="cursor-pointer list-none text-xl font-bold marker:content-none [&::-webkit-details-marker]:hidden">
+          <span className="flex flex-wrap items-center justify-between gap-2">
+            <span>Éditions mensuelles</span>
+            <span className="text-sm font-normal text-[var(--accent)] group-open:hidden">Afficher ({seasonMonthKeys.length} mois)</span>
+            <span className="hidden text-sm font-normal text-[var(--muted)] group-open:inline">Réduire</span>
+          </span>
+        </summary>
+        <p className="muted mt-3 text-sm">
+          Téléchargez un PDF listant, pour chaque séance du mois, les personnes inscrites (nom et prénom).
+        </p>
+        {seasonMonthKeys.length === 0 ? (
+          <p className="muted mt-4 text-sm">Aucune séance disponible pour la saison active.</p>
+        ) : (
+          <ul className="mt-4 space-y-2">
+            {seasonMonthKeys.map((monthKey) => {
+              const { year, month } = parseMonthKey(monthKey);
+              const label = formatMonthYear(year, month);
+              const monthSessions = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
+              const isExporting = exportingMonth === monthKey;
+              return (
+                <li
+                  key={monthKey}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium capitalize">{label}</p>
+                    <p className="muted text-sm">
+                      {monthSessions.length} séance{monthSessions.length > 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={Boolean(exportingMonth)}
+                    onClick={() => downloadMonthPdf(monthKey)}
+                  >
+                    {isExporting ? "Génération…" : "Édition PDF"}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </details>
+      ) : null}
     </div>
   );
 }

@@ -26,9 +26,10 @@ function navClass(active: boolean, mobile = false) {
 
 type Props = {
   participantName: string | null;
+  scheduleTagline?: string;
 };
 
-export function SiteHeader({ participantName }: Props) {
+export function SiteHeader({ participantName, scheduleTagline = "Préparation physique" }: Props) {
   const pathname = usePathname() ?? "/";
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -45,7 +46,7 @@ export function SiteHeader({ participantName }: Props) {
 
   return (
     <>
-      <header className="border-b border-[var(--border)] bg-white/80 backdrop-blur">
+      <header className="site-header sticky top-0 z-[100] border-b border-[var(--border)] bg-white/95 backdrop-blur">
         <div className="container flex items-center justify-between gap-3 py-3 md:py-4">
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
             <Link href="/" className="shrink-0">
@@ -62,7 +63,7 @@ export function SiteHeader({ participantName }: Props) {
               <Link href="/" className="block truncate text-base font-bold text-[var(--accent)] md:text-lg">
                 PPG Courir à Sausset
               </Link>
-              <p className="muted hidden text-sm sm:block">Jeudi 19h — préparation physique</p>
+              <p className="muted hidden text-sm sm:block">{scheduleTagline}</p>
             </div>
           </div>
 
@@ -94,7 +95,7 @@ export function SiteHeader({ participantName }: Props) {
 
           <button
             type="button"
-            className="burger-btn lg:hidden"
+            className="burger-btn relative z-[101] shrink-0 touch-manipulation lg:hidden"
             aria-expanded={menuOpen}
             aria-controls="mobile-menu"
             aria-label={menuOpen ? "Fermer le menu" : "Ouvrir le menu"}

@@ -286,3 +286,39 @@ export function findNextOpenSession<T extends { sessionDate: string; status: str
 export function formatTimeLabel(time: string) {
   return time.slice(0, 5).replace(":", "h");
 }
+
+const DAY_NAMES = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+
+export function formatDayOfWeekLong(dayOfWeek: number) {
+  return DAY_NAMES[dayOfWeek] ?? "jour";
+}
+
+export function formatDayOfWeekLongCapitalized(dayOfWeek: number) {
+  const label = formatDayOfWeekLong(dayOfWeek);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+export function formatDayOfWeekWithArticle(dayOfWeek: number) {
+  return `du ${formatDayOfWeekLong(dayOfWeek)}`;
+}
+
+export function formatSeasonScheduleTagline(season: {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  location: string;
+}) {
+  const day = formatDayOfWeekLongCapitalized(season.dayOfWeek);
+  const time = `${formatTimeLabel(season.startTime)}-${formatTimeLabel(season.endTime)}`;
+  const location = season.location.trim();
+  return location ? `${day} ${time} - ${location}` : `${day} ${time}`;
+}
+
+export function formatSeasonScheduleShort(season: {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  location: string;
+}) {
+  return `${formatDayOfWeekLongCapitalized(season.dayOfWeek)} ${formatTimeLabel(season.startTime)}-${formatTimeLabel(season.endTime)} - ${season.location.trim()}`;
+}

@@ -420,9 +420,28 @@ export default function FacturationPage() {
               seulement les présences le jeudi soir, puis valide le mois ici.
             </p>
           </div>
-          <Link href="/admin" className="btn btn-secondary">
-            Admin coach
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/admin" className="btn btn-secondary">
+              Admin coach
+            </Link>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                await fetch("/api/admin", {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "logout" }),
+                });
+                window.location.href = "/admin";
+              }}
+            >
+              Se déconnecter
+            </button>
+          </div>
         </div>
         {!brevoConfigured ? (
           <p className="mt-4 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">

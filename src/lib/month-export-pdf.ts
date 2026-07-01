@@ -1,24 +1,11 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { formatMonthYear, formatParisDate, formatTimeLabel, toMonthKey } from "@/lib/calendar";
+import { formatMonthYear, formatParisDate, formatSeasonScheduleShort, toMonthKey } from "@/lib/calendar";
+import { drawPpgPdfLogo, formatPdfEditionDate, sanitizePdfText } from "@/lib/pdf-utils";
 import type { Season, SessionWithMeta } from "@/lib/types";
 
 const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;
 const MARGIN = 50;
-
-function sanitizePdfText(text: string) {
-  return text
-    .normalize("NFC")
-    .replace(/[^\u0020-\u007E\u00A0-\u00FF]/g, (char) => {
-      const map: Record<string, string> = {
-        œ: "oe",
-        Œ: "OE",
-        æ: "ae",
-        Æ: "AE",
-      };
-      return map[char] ?? "?";
-    });
-}
 
 export type MonthRegistrationsReport = {
   season: Season;
@@ -32,6 +19,7 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const generatedAt = formatPdfEditionDate();
 
   let page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   let y = PAGE_HEIGHT - MARGIN;
@@ -43,10 +31,10 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
     }
   }
 
-  function drawLine(text: string, options?: { size?: number; bold?: boolean; indent?: number }) {
+  function drawLine(text: string, options?: { size?: number; bold?: boolean; indent?: number; x?: number }) {
     const size = options?.size ?? 11;
     const usedFont = options?.bold ? fontBold : font;
-    const x = MARGIN + (options?.indent ?? 0);
+    const x = options?.x ?? MARGIN + (options?.indent ?? 0);
     ensureSpace(size + 6);
     page.drawText(sanitizePdfText(text), {
       x,
@@ -58,10 +46,33 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
     y -= size + 6;
   }
 
-  drawLine("PPG Courir à Sausset", { size: 16, bold: true });
-  drawLine(`Édition des inscriptions — ${report.monthLabel}`, { size: 13, bold: true });
+  const logo = await drawPpgPdfLogo(pdfDoc, page, MARGIN, y, 68);
+  const textX = MARGIN + 68 + 14;
+  page.drawText(sanitizePdfText("PPG Courir a Sausset"), {
+    x: textX,
+    y: y - 18,
+    size: 15,
+    font: fontBold,
+    color: rgb(0.1, 0.25, 0.16),
+  });
+  page.drawText(sanitizePdfText(`Edition des inscriptions - ${report.monthLabel}`), {
+    x: textX,
+    y: y - 34,
+    size: 11,
+    font,
+    color: rgb(0.25, 0.25, 0.25),
+  });
+  page.drawText(sanitizePdfText(`Edite le ${generatedAt}`), {
+    x: textX,
+    y: y - 48,
+    size: 9,
+    font,
+    color: rgb(0.45, 0.45, 0.45),
+  });
+  y = Math.min(logo.bottom, y - 56) - 8;
+
   drawLine(
-    `Saison ${report.season.label} · ${formatTimeLabel(report.season.startTime)}–${formatTimeLabel(report.season.endTime)} · ${report.season.location}`,
+    `Saison ${report.season.label} - ${formatSeasonScheduleShort(report.season)}`,
     { size: 10 },
   );
   y -= 8;
@@ -69,7 +80,7 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
   const sessions = [...report.sessions].sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
 
   if (sessions.length === 0) {
-    drawLine("Aucune séance ce mois-ci.");
+    drawLine("Aucune seance ce mois-ci.");
   }
 
   for (const session of sessions) {
@@ -85,15 +96,15 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
 
     const statusSuffix =
       session.status === "cancelled"
-        ? " — Annulée"
+        ? " - Annulee"
         : session.status === "rescheduled"
-          ? " — Reportée"
+          ? " - Reportee"
           : "";
 
     drawLine(`${formatParisDate(session.sessionDate)}${statusSuffix}`, { size: 12, bold: true });
 
     if (session.theme?.trim()) {
-      drawLine(`Thème : ${session.theme.trim()}`, { size: 10, indent: 8 });
+      drawLine(`Theme : ${session.theme.trim()}`, { size: 10, indent: 8 });
     }
 
     if (session.notes?.trim()) {
@@ -115,14 +126,8 @@ export async function buildMonthRegistrationsPdf(report: MonthRegistrationsRepor
     y -= 6;
   }
 
-  const generatedAt = new Intl.DateTimeFormat("fr-FR", {
-    timeZone: "Europe/Paris",
-    dateStyle: "long",
-    timeStyle: "short",
-  }).format(new Date());
-
   ensureSpace(16);
-  page.drawText(sanitizePdfText(`Généré le ${generatedAt}`), {
+  page.drawText(sanitizePdfText(`Document genere le ${generatedAt}`), {
     x: MARGIN,
     y: MARGIN,
     size: 8,

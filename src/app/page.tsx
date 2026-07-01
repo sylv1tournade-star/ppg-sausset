@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatDayOfWeekWithArticle } from "@/lib/calendar";
 import { getParticipantToken } from "@/lib/auth";
 import { enrichSessions, getActiveSeason, getParticipantByToken, getRanking, getSessionsForSeason } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -44,7 +45,7 @@ export default async function HomePage() {
     <div className="container space-y-8">
       <section className="card p-6">
         <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent)]">Saison {season.label}</p>
-        <h1 className="mt-1 text-3xl font-bold">Séances PPG du jeudi</h1>
+        <h1 className="mt-1 text-3xl font-bold">Séances PPG {formatDayOfWeekWithArticle(season.dayOfWeek)}</h1>
         <p className="muted mt-2">
           Inscrivez-vous aux séances à venir. Chaque inscription peut être ajoutée à votre agenda (rappel 2 h avant,
           heure de Paris).
