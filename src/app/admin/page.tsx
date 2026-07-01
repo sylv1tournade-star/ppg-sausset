@@ -18,6 +18,7 @@ export default function AdminPage() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [season, setSeason] = useState<Season | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [stats, setStats] = useState<BureauStats | null>(null);
@@ -29,8 +30,6 @@ export default function AdminPage() {
   const [startYear, setStartYear] = useState(new Date().getFullYear());
   const [busy, setBusy] = useState(false);
   const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
-  const [importRaw, setImportRaw] = useState("");
-  const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
   const [exportingMonth, setExportingMonth] = useState<string | null>(null);
 
   const seasonMonthKeys = useMemo(() => {
@@ -52,12 +51,12 @@ export default function AdminPage() {
 
     const [main, statsResponse, membersResponse] = await Promise.all([
       fetch("/api/admin"),
-      fetch("/api/admin?action=stats"),
-      fetch("/api/admin?action=members"),
+      pingData.superAdmin ? fetch("/api/admin?action=stats") : Promise.resolve(null),
+      pingData.superAdmin ? fetch("/api/admin/billing?action=members") : Promise.resolve(null),
     ]);
     const mainData = await main.json();
-    const statsData = await statsResponse.json();
-    const membersData = await membersResponse.json();
+    const statsData = statsResponse ? await statsResponse.json() : { stats: null };
+    const membersData = membersResponse ? await membersResponse.json() : { members: [] };
     setSeason(mainData.season ?? null);
     setSessions(mainData.sessions ?? []);
     setStats(statsData.stats ?? null);
@@ -127,6 +126,13 @@ export default function AdminPage() {
       return;
     }
     setSessions((current) => current.map((session) => (session.id === sessionId ? data.session : session)));
+    if (data.notification?.sent > 0) {
+      setNotice(`${data.notification.sent} e-mail(s) d'annulation/report envoyé(s) aux inscrits.`);
+    } else if (data.notification?.skipped && data.notification.reason === "BREVO_NOT_CONFIGURED") {
+      setNotice("Séance mise à jour, mais Brevo n'est pas configuré : aucun e-mail envoyé.");
+    } else {
+      setNotice(null);
+    }
   }
 
   async function openAttendance(sessionId: string) {
@@ -199,45 +205,6 @@ export default function AdminPage() {
     }
   }
 
-  async function importMembers() {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/admin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "members.import", raw: importRaw, mode: importMode }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "Erreur");
-      }
-      setPaidMembers(data.members ?? []);
-      setImportRaw("");
-    } catch (importError) {
-      setError(importError instanceof Error ? importError.message : "Erreur");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clearMembers() {
-    if (!window.confirm("Vider la liste des adhérents à jour ?")) {
-      return;
-    }
-    setBusy(true);
-    try {
-      await fetch("/api/admin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "members.clear" }),
-      });
-      setPaidMembers([]);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function downloadMonthPdf(monthKey: string) {
     const { year, month } = parseMonthKey(monthKey);
     setExportingMonth(monthKey);
@@ -267,7 +234,7 @@ export default function AdminPage() {
       <div className="container max-w-md">
         <section className="card p-6">
           <h1 className="text-2xl font-bold">Admin PPG</h1>
-          <p className="muted mt-2">Accès réservé à Manon (coach) et à Suzanne (responsable PPG).</p>
+          <p className="muted mt-2">Accès coach (Manon) ou responsable PPG (Suzanne).</p>
           <form className="mt-6 space-y-4" onSubmit={login}>
             <label className="block space-y-1">
               <span className="text-sm font-medium">PIN admin</span>
@@ -296,90 +263,65 @@ export default function AdminPage() {
   return (
     <div className="container space-y-6">
       <section className="card p-6">
-        <h1 className="text-2xl font-bold">Administration PPG</h1>
+        <h1 className="text-2xl font-bold">{isSuperAdmin ? "Administration PPG" : "Séances PPG — Manon"}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           {isSuperAdmin ? (
             <Link href="/admin/facturation" className="btn btn-secondary text-sm">
-              Facturation trésoriers
+              Facturation & adhérents
             </Link>
           ) : null}
         </div>
-        {season ? (
-          <p className="muted mt-2">
-            Saison active {season.label} · {formatParisShortDate(`${season.startYear}-09-01`)} → jeudis générés
-          </p>
+        {isSuperAdmin ? (
+          season ? (
+            <p className="muted mt-2">
+              Saison active {season.label} · {formatParisShortDate(`${season.startYear}-09-01`)} → jeudis générés
+            </p>
+          ) : (
+            <p className="muted mt-2">Aucune saison active.</p>
+          )
         ) : (
-          <p className="muted mt-2">Aucune saison active.</p>
+          <p className="muted mt-2">
+            Modifiez le statut, le thème ou les commentaires d&apos;une séance. En cas d&apos;annulation ou de report,
+            les inscrits reçoivent un e-mail automatiquement.
+          </p>
         )}
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <label className="space-y-1">
-            <span className="text-sm font-medium">Année de début (septembre)</span>
-            <input
-              className="input"
-              type="number"
-              value={startYear}
-              onChange={(e) => setStartYear(Number(e.target.value))}
-            />
-          </label>
-          <button type="button" className="btn btn-primary" onClick={createSeason} disabled={busy}>
-            Créer la saison
-          </button>
-        </div>
+        {isSuperAdmin ? (
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="space-y-1">
+              <span className="text-sm font-medium">Année de début (septembre)</span>
+              <input
+                className="input"
+                type="number"
+                value={startYear}
+                onChange={(e) => setStartYear(Number(e.target.value))}
+              />
+            </label>
+            <button type="button" className="btn btn-primary" onClick={createSeason} disabled={busy}>
+              Créer la saison
+            </button>
+          </div>
+        ) : null}
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
+        {notice ? <p className="mt-3 text-sm text-[var(--accent)]">{notice}</p> : null}
       </section>
 
+      {isSuperAdmin ? (
       <section className="card p-6">
         <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
         <p className="muted mt-2 text-sm">
-          Importez la liste des membres du club. Seules ces personnes pourront créer un profil PPG. Format : une ligne
-          par personne, « Prénom Nom » ou « Prénom;Nom » (CSV).
+          Géré dans <Link href="/admin/facturation" className="font-semibold text-[var(--accent)]">Facturation & adhérents</Link>.
         </p>
         {paidMembers.length === 0 ? (
           <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
-            Liste vide : les inscriptions publiques sont bloquées tant que cette liste n&apos;est pas importée.
+            Liste vide : les inscriptions publiques sont bloquées tant que Suzanne n&apos;a pas importé la liste.
           </p>
-        ) : null}
-        <div className="mt-4 flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              checked={importMode === "replace"}
-              onChange={() => setImportMode("replace")}
-            />
-            Remplacer la liste
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="radio" checked={importMode === "merge"} onChange={() => setImportMode("merge")} />
-            Ajouter à la liste
-          </label>
-        </div>
-        <textarea
-          className="input mt-3 min-h-40 font-mono text-sm"
-          placeholder={"Suzanne Huss\nPhilippe Lacues\nMarina;Dupont"}
-          value={importRaw}
-          onChange={(e) => setImportRaw(e.target.value)}
-        />
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className="btn btn-primary" onClick={importMembers} disabled={busy || !importRaw.trim()}>
-            Importer
-          </button>
-          <button type="button" className="btn btn-danger" onClick={clearMembers} disabled={busy || paidMembers.length === 0}>
-            Vider la liste
-          </button>
-          <span className="muted self-center text-sm">{paidMembers.length} membre{paidMembers.length > 1 ? "s" : ""}</span>
-        </div>
-        {paidMembers.length > 0 ? (
-          <ul className="mt-4 max-h-48 overflow-auto rounded-xl border border-[var(--border)] divide-y divide-[var(--border)]">
-            {paidMembers.map((member) => (
-              <li key={member.id} className="px-3 py-2 text-sm">
-                {member.firstName} {member.lastName}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        ) : (
+          <p className="muted mt-3 text-sm">{paidMembers.length} adhérent(s) importé(s).</p>
+        )}
       </section>
+      ) : null}
 
-      {stats ? (
+      {isSuperAdmin && stats ? (
         <section className="card p-6">
           <h2 className="text-xl font-bold">Stats bureau</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -415,6 +357,7 @@ export default function AdminPage() {
         </section>
       ) : null}
 
+      {isSuperAdmin ? (
       <section className="card p-6">
         <h2 className="text-xl font-bold">Éditions mensuelles</h2>
         <p className="muted mt-2 text-sm">
@@ -454,8 +397,9 @@ export default function AdminPage() {
           </ul>
         )}
       </section>
+      ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className={isSuperAdmin ? "grid gap-6 lg:grid-cols-2" : ""}>
         <div className="card p-6">
           <h2 className="text-xl font-bold">Séances</h2>
           <div className="mt-4 max-h-[70vh] space-y-4 overflow-auto">
@@ -489,14 +433,17 @@ export default function AdminPage() {
                   defaultValue={session.notes ?? ""}
                   onBlur={(e) => updateSession(session.id, { notes: e.target.value })}
                 />
-                <button type="button" className="btn btn-secondary mt-3" onClick={() => openAttendance(session.id)}>
-                  Feuille de présence
-                </button>
+                {isSuperAdmin ? (
+                  <button type="button" className="btn btn-secondary mt-3" onClick={() => openAttendance(session.id)}>
+                    Feuille de présence
+                  </button>
+                ) : null}
               </article>
             ))}
           </div>
         </div>
 
+        {isSuperAdmin ? (
         <div className="card p-6">
           <h2 className="text-xl font-bold">Présence</h2>
           {!selectedSession ? (
@@ -583,6 +530,7 @@ export default function AdminPage() {
             </>
           )}
         </div>
+        ) : null}
       </section>
     </div>
   );

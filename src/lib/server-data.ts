@@ -1,10 +1,4 @@
-import {
-  formatMonthYear,
-  getThursdayDatesForSeason,
-  isSessionPast,
-  seasonLabelFromStartYear,
-  toMonthKey,
-} from "@/lib/calendar";
+import { formatMonthYear, formatParisDate, getThursdayDatesForSeason, isSessionPast, seasonLabelFromStartYear, toMonthKey } from "@/lib/calendar";
 import {
   computeRanking,
   mapParticipant,
@@ -184,6 +178,15 @@ export async function getAttendanceForSeason(seasonId: string): Promise<Attendan
   }));
 }
 
+export async function getSessionById(sessionId: string): Promise<Session | null> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from("ppg_sessions").select("*").eq("id", sessionId).maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return data ? mapSession(data) : null;
+}
+
 export async function getSessionParticipants(sessionId: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
@@ -212,6 +215,81 @@ export async function getSessionParticipants(sessionId: string) {
     })
     .filter((value): value is { id: string; firstName: string; lastName: string } => value !== null)
     .sort((a, b) => a.firstName.localeCompare(b.firstName, "fr"));
+}
+
+export async function getSessionRegisteredWithEmail(sessionId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_registrations")
+    .select("participant_id, ppg_participants(id, first_name, last_name, email)")
+    .eq("session_id", sessionId);
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? [])
+    .map((row) => {
+      const participant = row.ppg_participants as
+        | { id: string; first_name: string; last_name: string; email: string }
+        | { id: string; first_name: string; last_name: string; email: string }[]
+        | null;
+      const value = Array.isArray(participant) ? participant[0] : participant;
+      if (!value) {
+        return null;
+      }
+      return {
+        id: value.id,
+        firstName: value.first_name,
+        lastName: value.last_name,
+        email: value.email,
+      };
+    })
+    .filter(
+      (value): value is { id: string; firstName: string; lastName: string; email: string } => value !== null,
+    )
+    .sort((a, b) => a.firstName.localeCompare(b.firstName, "fr"));
+}
+
+export async function notifySessionNotMaintained(
+  sessionId: string,
+  status: "cancelled" | "rescheduled",
+) {
+  const session = await getSessionById(sessionId);
+  if (!session) {
+    return { sent: 0, skipped: true, reason: "SESSION_NOT_FOUND" as const };
+  }
+
+  const participants = await getSessionRegisteredWithEmail(sessionId);
+  if (participants.length === 0) {
+    return { sent: 0, skipped: true, reason: "NO_REGISTRATIONS" as const };
+  }
+
+  const { isBrevoConfigured, sendSessionNotMaintainedEmail } = await import("@/lib/email");
+  if (!isBrevoConfigured()) {
+    return { sent: 0, skipped: true, reason: "BREVO_NOT_CONFIGURED" as const };
+  }
+
+  const cc = [
+    ...(await listBillingRecipients("coach")).map((item) => item.email),
+    ...(await listBillingRecipients("billing_manager")).map((item) => item.email),
+  ];
+
+  const dateLabel = formatParisDate(session.sessionDate);
+  let sent = 0;
+  for (const participant of participants) {
+    await sendSessionNotMaintainedEmail({
+      to: participant.email,
+      cc,
+      firstName: participant.firstName,
+      sessionDateLabel: dateLabel,
+      status,
+      theme: session.theme,
+      notes: session.notes,
+    });
+    sent += 1;
+  }
+
+  return { sent, skipped: false, reason: null };
 }
 
 export async function enrichSessions(
@@ -1206,5 +1284,21 @@ export async function maybeSendMonthValidationReminder() {
 
   await markMonthReminderSent(season.id, year, month);
   return { sent: true, monthLabel };
+}
+
+export async function seedDefaultBillingEmails() {
+  const defaults: Array<{ email: string; recipientType: BillingRecipientType; label: string }> = [
+    { email: "ruffin.manin@gmail.com", recipientType: "coach", label: "Manon" },
+    { email: "huss.suzanne@gmail.com", recipientType: "billing_manager", label: "Suzanne" },
+    { email: "emmeline.francois@orange.fr", recipientType: "treasurer", label: "Emmeline" },
+  ];
+
+  for (const item of defaults) {
+    try {
+      await addBillingRecipient(item.email, item.recipientType, item.label);
+    } catch {
+      // already exists
+    }
+  }
 }
 

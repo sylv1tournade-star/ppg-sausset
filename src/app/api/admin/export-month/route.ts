@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAdminAuthenticated } from "@/lib/auth";
+import { isSuperAdminAuthenticated } from "@/lib/auth";
 import { buildMonthRegistrationsPdf } from "@/lib/month-export-pdf";
 import { getMonthRegistrationsReport } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -11,8 +11,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Supabase non configuré." }, { status: 503 });
   }
 
-  if (!(await isAdminAuthenticated())) {
-    return NextResponse.json({ error: "Accès admin requis." }, { status: 401 });
+  if (!(await isSuperAdminAuthenticated())) {
+    return NextResponse.json({ error: "Accès réservé à la responsable PPG." }, { status: 403 });
   }
 
   const { searchParams } = new URL(request.url);

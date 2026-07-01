@@ -3,17 +3,18 @@ import {
   clearAdminCookie,
   getAdminRole,
   isAdminAuthenticated,
+  isSuperAdminAuthenticated,
   resolveAdminPin,
   setAdminCookie,
 } from "@/lib/auth";
 import {
   clearPaidMembers,
-  countPaidMembers,
   createSeason,
   getActiveSeason,
   getAddableParticipantsForSession,
   getAttendanceForSession,
   getBureauStats,
+  getSessionById,
   getSessionParticipants,
   getSessionsForSeason,
   importPaidMembers,
@@ -21,6 +22,7 @@ import {
   listSeasons,
   markAllAttendance,
   markAttendance,
+  notifySessionNotMaintained,
   registerAndMarkAttendance,
   updateSession,
 } from "@/lib/server-data";
@@ -29,6 +31,13 @@ import { isSupabaseConfigured } from "@/lib/supabase";
 async function requireAdmin() {
   if (!(await isAdminAuthenticated())) {
     return NextResponse.json({ error: "Accès admin requis." }, { status: 401 });
+  }
+  return null;
+}
+
+async function requireSuperAdmin() {
+  if (!(await isSuperAdminAuthenticated())) {
+    return NextResponse.json({ error: "Accès réservé à la responsable PPG." }, { status: 403 });
   }
   return null;
 }
@@ -61,11 +70,19 @@ export async function GET(request: Request) {
   }
 
   if (action === "stats") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const stats = await getBureauStats();
     return NextResponse.json({ stats });
   }
 
   if (action === "members") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const season = await getActiveSeason();
     if (!season) {
       return NextResponse.json({ season: null, members: [], count: 0 });
@@ -81,6 +98,10 @@ export async function GET(request: Request) {
 
   const sessionId = searchParams.get("sessionId");
   if (sessionId) {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const [participants, attendance, addable] = await Promise.all([
       getSessionParticipants(sessionId),
       getAttendanceForSession(sessionId),
@@ -122,6 +143,10 @@ export async function POST(request: Request) {
   }
 
   if (action === "season.create") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const startYear = Number(body.startYear);
     if (!Number.isFinite(startYear)) {
       return NextResponse.json({ error: "Année de début invalide." }, { status: 400 });
@@ -142,15 +167,35 @@ export async function POST(request: Request) {
     if (!sessionId) {
       return NextResponse.json({ error: "Séance manquante." }, { status: 400 });
     }
+
+    const previous = await getSessionById(sessionId);
+    const nextStatus = body.status
+      ? (String(body.status) as "scheduled" | "cancelled" | "rescheduled")
+      : undefined;
+
     const session = await updateSession(sessionId, {
-      status: body.status ? (String(body.status) as "scheduled" | "cancelled" | "rescheduled") : undefined,
+      status: nextStatus,
       theme: body.theme !== undefined ? String(body.theme) : undefined,
       notes: body.notes !== undefined ? String(body.notes) : undefined,
     });
-    return NextResponse.json({ session });
+
+    let notification: Awaited<ReturnType<typeof notifySessionNotMaintained>> | null = null;
+    if (
+      previous?.status === "scheduled" &&
+      nextStatus &&
+      (nextStatus === "cancelled" || nextStatus === "rescheduled")
+    ) {
+      notification = await notifySessionNotMaintained(sessionId, nextStatus);
+    }
+
+    return NextResponse.json({ session, notification });
   }
 
   if (action === "attendance.mark") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const sessionId = String(body.sessionId ?? "");
     const participantId = String(body.participantId ?? "");
     const status = String(body.status ?? "") as "present" | "absent" | "excused";
@@ -163,6 +208,10 @@ export async function POST(request: Request) {
   }
 
   if (action === "attendance.markAll") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const sessionId = String(body.sessionId ?? "");
     const status = String(body.status ?? "present") as "present" | "absent" | "excused";
     if (!sessionId || !["present", "absent", "excused"].includes(status)) {
@@ -179,6 +228,10 @@ export async function POST(request: Request) {
   }
 
   if (action === "attendance.add") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const sessionId = String(body.sessionId ?? "");
     const participantId = String(body.participantId ?? "");
     if (!sessionId || !participantId) {
@@ -194,6 +247,10 @@ export async function POST(request: Request) {
   }
 
   if (action === "members.import") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const season = await getActiveSeason();
     if (!season) {
       return NextResponse.json({ error: "Créez d'abord une saison active." }, { status: 400 });
@@ -206,6 +263,10 @@ export async function POST(request: Request) {
   }
 
   if (action === "members.clear") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
     const season = await getActiveSeason();
     if (!season) {
       return NextResponse.json({ error: "Aucune saison active." }, { status: 400 });

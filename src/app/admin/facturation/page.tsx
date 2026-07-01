@@ -10,6 +10,7 @@ import type {
   BillingSessionRow,
   MonthBillingPreview,
   MonthValidation,
+  PaidMember,
   TreasurerEmail,
 } from "@/lib/types";
 
@@ -70,6 +71,9 @@ export default function FacturationPage() {
     coach: { email: "", label: "" },
     billing_manager: { email: "", label: "" },
   });
+  const [paidMembers, setPaidMembers] = useState<PaidMember[]>([]);
+  const [importRaw, setImportRaw] = useState("");
+  const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
 
   async function refresh() {
     const ping = await fetch("/api/admin?action=ping");
@@ -80,21 +84,31 @@ export default function FacturationPage() {
       return;
     }
 
-    const [configRes, recipientsRes, validationsRes, adminRes] = await Promise.all([
+    const [configRes, recipientsRes, validationsRes, adminRes, membersRes] = await Promise.all([
       fetch("/api/admin/billing?action=config"),
       fetch("/api/admin/billing?action=recipients"),
       fetch("/api/admin/billing?action=validations"),
       fetch("/api/admin"),
+      fetch("/api/admin/billing?action=members"),
     ]);
 
     const configData = await configRes.json();
-    const recipientsData = await recipientsRes.json();
+    let recipientsData = await recipientsRes.json();
     const validationsData = await validationsRes.json();
     const adminData = await adminRes.json();
+    const membersData = await membersRes.json();
+
+    if ((recipientsData.recipients ?? []).length === 0) {
+      const seedRes = await fetch("/api/admin/billing?action=seed");
+      if (seedRes.ok) {
+        recipientsData = await seedRes.json();
+      }
+    }
 
     setBrevoConfigured(Boolean(configData.brevoConfigured));
     setRecipients(recipientsData.recipients ?? []);
     setValidations(validationsData.validations ?? []);
+    setPaidMembers(membersData.members ?? []);
 
     const keys = new Set<string>();
     for (const session of adminData.sessions ?? []) {
@@ -167,6 +181,48 @@ export default function FacturationPage() {
       const data = await response.json();
       if (response.ok) {
         setRecipients(data.recipients ?? []);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importMembers() {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "members.import", raw: importRaw, mode: importMode }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "Erreur");
+      }
+      setPaidMembers(data.members ?? []);
+      setImportRaw("");
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearMembers() {
+    if (!window.confirm("Vider la liste des adhérents à jour ?")) {
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/admin/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "members.clear" }),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setPaidMembers(data.members ?? []);
       }
     } finally {
       setBusy(false);
@@ -354,6 +410,55 @@ export default function FacturationPage() {
           </p>
         ) : null}
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
+      </section>
+
+      <section className="card p-6">
+        <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
+        <p className="muted mt-2 text-sm">
+          Importez la liste des membres du club. Seules ces personnes pourront créer un profil PPG. Format : une ligne
+          par personne, « Prénom Nom » ou « Prénom;Nom » (CSV).
+        </p>
+        {paidMembers.length === 0 ? (
+          <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
+            Liste vide : les inscriptions publiques sont bloquées tant que cette liste n&apos;est pas importée.
+          </p>
+        ) : null}
+        <div className="mt-4 flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="radio" checked={importMode === "replace"} onChange={() => setImportMode("replace")} />
+            Remplacer la liste
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="radio" checked={importMode === "merge"} onChange={() => setImportMode("merge")} />
+            Ajouter à la liste
+          </label>
+        </div>
+        <textarea
+          className="input mt-3 min-h-40 font-mono text-sm"
+          placeholder={"Suzanne Huss\nPhilippe Lacues\nMarina;Dupont"}
+          value={importRaw}
+          onChange={(event) => setImportRaw(event.target.value)}
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className="btn btn-primary" onClick={importMembers} disabled={busy || !importRaw.trim()}>
+            Importer
+          </button>
+          <button type="button" className="btn btn-danger" onClick={clearMembers} disabled={busy || paidMembers.length === 0}>
+            Vider la liste
+          </button>
+          <span className="muted self-center text-sm">
+            {paidMembers.length} membre{paidMembers.length > 1 ? "s" : ""}
+          </span>
+        </div>
+        {paidMembers.length > 0 ? (
+          <ul className="mt-4 max-h-48 overflow-auto rounded-xl border border-[var(--border)] divide-y divide-[var(--border)]">
+            {paidMembers.map((member) => (
+              <li key={member.id} className="px-3 py-2 text-sm">
+                {member.firstName} {member.lastName}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       {RECIPIENT_SECTIONS.map((section) => (

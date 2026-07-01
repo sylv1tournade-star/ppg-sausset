@@ -87,6 +87,48 @@ export async function sendValidationReminderEmail(input: {
   });
 }
 
+export async function sendSessionNotMaintainedEmail(input: {
+  to: string;
+  cc: string[];
+  firstName: string;
+  sessionDateLabel: string;
+  status: "cancelled" | "rescheduled";
+  theme: string | null;
+  notes: string | null;
+}) {
+  if (!isBrevoConfigured()) {
+    throw new Error("BREVO_NOT_CONFIGURED");
+  }
+
+  const senderName = process.env.BREVO_SENDER_NAME ?? "PPG Courir à Sausset";
+  const senderEmail = process.env.BREVO_SENDER_EMAIL!;
+  const statusLabel = input.status === "cancelled" ? "annulée" : "reportée";
+  const themeLine = input.theme?.trim()
+    ? `<p><strong>Thème prévu :</strong> ${escapeHtml(input.theme.trim())}</p>`
+    : "";
+  const notesLine = input.notes?.trim()
+    ? `<p><strong>Précisions :</strong> ${escapeHtml(input.notes.trim())}</p>`
+    : "";
+
+  const htmlContent = `
+    <p>Bonjour ${escapeHtml(input.firstName)},</p>
+    <p>La séance PPG du <strong>${escapeHtml(input.sessionDateLabel)}</strong> est <strong>${statusLabel}</strong>.</p>
+    ${themeLine}
+    ${notesLine}
+    <p>Vous n'avez pas besoin de vous déplacer pour cette date.</p>
+    <p>Consultez le calendrier PPG pour les prochaines séances.</p>
+    <p>Cordialement,<br/>PPG Courir à Sausset · Manon</p>
+  `.trim();
+
+  await postBrevoEmail({
+    sender: { name: senderName, email: senderEmail },
+    to: [{ email: input.to }],
+    cc: input.cc.map((email) => ({ email })),
+    subject: `PPG Sausset — Séance ${statusLabel} — ${input.sessionDateLabel}`,
+    htmlContent,
+  });
+}
+
 async function postBrevoEmail(body: Record<string, unknown>) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",

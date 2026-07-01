@@ -3,12 +3,16 @@ import { isSuperAdminAuthenticated } from "@/lib/auth";
 import { isBrevoConfigured } from "@/lib/email";
 import {
   addBillingRecipient,
+  clearPaidMembers,
   getActiveSeason,
   getMonthBillingPreview,
+  importPaidMembers,
   listBillingRecipients,
   listMonthValidations,
+  listPaidMembers,
   removeBillingRecipient,
   saveAndSendMonthValidation,
+  seedDefaultBillingEmails,
 } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import type { BillingAccountingStatus, BillingRecipientType } from "@/lib/types";
@@ -59,6 +63,21 @@ export async function GET(request: Request) {
     }
     const validations = await listMonthValidations(season.id);
     return NextResponse.json({ season, validations });
+  }
+
+  if (action === "members") {
+    const season = await getActiveSeason();
+    if (!season) {
+      return NextResponse.json({ season: null, members: [], count: 0 });
+    }
+    const members = await listPaidMembers(season.id);
+    return NextResponse.json({ season, members, count: members.length });
+  }
+
+  if (action === "seed") {
+    await seedDefaultBillingEmails();
+    const recipients = await listBillingRecipients();
+    return NextResponse.json({ recipients });
   }
 
   const year = Number(searchParams.get("year"));
@@ -119,6 +138,27 @@ export async function POST(request: Request) {
     await removeBillingRecipient(id);
     const recipients = await listBillingRecipients();
     return NextResponse.json({ recipients, treasurers: recipients.filter((r) => r.recipientType === "treasurer") });
+  }
+
+  if (action === "members.import") {
+    const season = await getActiveSeason();
+    if (!season) {
+      return NextResponse.json({ error: "Créez d'abord une saison active." }, { status: 400 });
+    }
+    const raw = String(body.raw ?? "");
+    const mode = body.mode === "merge" ? "merge" : "replace";
+    const result = await importPaidMembers(season.id, raw, mode);
+    const members = await listPaidMembers(season.id);
+    return NextResponse.json({ ...result, members });
+  }
+
+  if (action === "members.clear") {
+    const season = await getActiveSeason();
+    if (!season) {
+      return NextResponse.json({ error: "Aucune saison active." }, { status: 400 });
+    }
+    await clearPaidMembers(season.id);
+    return NextResponse.json({ count: 0, members: [] });
   }
 
   if (action === "send") {
