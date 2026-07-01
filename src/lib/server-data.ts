@@ -17,6 +17,8 @@ import { matchesPaidMember, memberKey, parsePaidMembersImport } from "@/lib/memb
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type {
   Attendance,
+  BillingAccountingStatus,
+  BillingRecipientType,
   BillingSessionRow,
   BillingSessionSnapshot,
   BureauStats,
@@ -31,6 +33,7 @@ import type {
   SessionWithMeta,
   TreasurerEmail,
 } from "@/lib/types";
+import { billableSnapshotsFromRows, countBillableSessions, suggestAccountingStatus } from "@/lib/billing";
 
 export async function getActiveSeason(): Promise<Season | null> {
   const supabase = getSupabaseAdmin();
@@ -754,10 +757,11 @@ export async function getMonthRegistrationsReport(year: number, monthIndex: numb
   };
 }
 
-type TreasurerEmailRow = {
+type BillingEmailRow = {
   id: string;
   email: string;
   label: string | null;
+  recipient_type: BillingRecipientType;
   created_at: string;
 };
 
@@ -776,11 +780,12 @@ type MonthValidationRow = {
   updated_at: string;
 };
 
-function mapTreasurerEmail(row: TreasurerEmailRow): TreasurerEmail {
+function mapBillingEmail(row: BillingEmailRow): TreasurerEmail {
   return {
     id: row.id,
     email: row.email,
     label: row.label,
+    recipientType: row.recipient_type,
     createdAt: row.created_at,
   };
 }
@@ -802,19 +807,28 @@ function mapMonthValidation(row: MonthValidationRow): MonthValidation {
   };
 }
 
-export async function listTreasurerEmails(): Promise<TreasurerEmail[]> {
+export async function listBillingRecipients(type?: BillingRecipientType): Promise<TreasurerEmail[]> {
   const supabase = getSupabaseAdmin();
-  const { data, error } = await supabase
-    .from("ppg_treasurer_emails")
-    .select("*")
-    .order("email", { ascending: true });
+  let query = supabase.from("ppg_treasurer_emails").select("*").order("email", { ascending: true });
+  if (type) {
+    query = query.eq("recipient_type", type);
+  }
+  const { data, error } = await query;
   if (error) {
     throw error;
   }
-  return (data ?? []).map((row) => mapTreasurerEmail(row as TreasurerEmailRow));
+  return (data ?? []).map((row) => mapBillingEmail(row as BillingEmailRow));
 }
 
-export async function addTreasurerEmail(email: string, label?: string | null) {
+export async function listTreasurerEmails() {
+  return listBillingRecipients("treasurer");
+}
+
+export async function addBillingRecipient(
+  email: string,
+  recipientType: BillingRecipientType,
+  label?: string | null,
+) {
   const supabase = getSupabaseAdmin();
   const normalized = email.trim().toLowerCase();
   if (!normalized || !normalized.includes("@")) {
@@ -822,21 +836,33 @@ export async function addTreasurerEmail(email: string, label?: string | null) {
   }
   const { data, error } = await supabase
     .from("ppg_treasurer_emails")
-    .insert({ email: normalized, label: label?.trim() || null })
+    .insert({
+      email: normalized,
+      label: label?.trim() || null,
+      recipient_type: recipientType,
+    })
     .select("*")
     .single();
   if (error) {
     throw error;
   }
-  return mapTreasurerEmail(data as TreasurerEmailRow);
+  return mapBillingEmail(data as BillingEmailRow);
 }
 
-export async function removeTreasurerEmail(id: string) {
+export async function addTreasurerEmail(email: string, label?: string | null) {
+  return addBillingRecipient(email, "treasurer", label);
+}
+
+export async function removeBillingRecipient(id: string) {
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from("ppg_treasurer_emails").delete().eq("id", id);
   if (error) {
     throw error;
   }
+}
+
+export async function removeTreasurerEmail(id: string) {
+  return removeBillingRecipient(id);
 }
 
 export async function getMonthValidation(seasonId: string, year: number, month: number) {
@@ -878,7 +904,6 @@ async function buildBillingSessionRow(
   ]);
 
   const attendanceByParticipant = new Map(attendance.map((record) => [record.participantId, record]));
-  const issues: string[] = [];
   const past = isSessionPast(session.sessionDate, season.endTime);
   const presentParticipants = registered
     .filter((participant) => attendanceByParticipant.get(participant.id)?.status === "present")
@@ -886,23 +911,18 @@ async function buildBillingSessionRow(
       firstName: participant.firstName,
       lastName: participant.lastName,
     }));
+  const registeredParticipants = registered.map((participant) => ({
+    firstName: participant.firstName,
+    lastName: participant.lastName,
+  }));
 
-  let attendanceComplete = true;
-  if (past && session.status === "scheduled" && registered.length > 0) {
-    for (const participant of registered) {
-      if (!attendanceByParticipant.has(participant.id)) {
-        attendanceComplete = false;
-        issues.push(`Présence non renseignée pour ${participant.firstName} ${participant.lastName}`);
-      }
-    }
-  }
-
-  if (past && session.status === "scheduled" && registered.length > 0 && !attendanceComplete) {
-    issues.push("Feuille de présence incomplète");
-  }
-
-  const isRealized =
-    past && session.status === "scheduled" && attendanceComplete && presentParticipants.length >= 1;
+  const suggestedAccountingStatus = suggestAccountingStatus({
+    sessionDate: session.sessionDate,
+    status: session.status,
+    past,
+    presentCount: presentParticipants.length,
+    registeredCount: registered.length,
+  });
 
   return {
     id: session.id,
@@ -911,11 +931,15 @@ async function buildBillingSessionRow(
     status: session.status,
     registeredCount: registered.length,
     presentCount: presentParticipants.length,
-    attendanceComplete,
-    isRealized,
+    attendanceMarkedCount: attendance.length,
+    suggestedAccountingStatus,
     presentParticipants,
-    issues,
+    registeredParticipants,
   };
+}
+
+function accountingStatusFromSnapshot(snapshot: BillingSessionSnapshot): BillingAccountingStatus {
+  return snapshot.accountingStatus ?? (snapshot.presentCount >= 1 ? "realized" : "not_held");
 }
 
 export async function getMonthBillingPreview(year: number, monthIndex: number): Promise<MonthBillingPreview> {
@@ -930,33 +954,20 @@ export async function getMonthBillingPreview(year: number, monthIndex: number): 
   );
 
   const rows = await Promise.all(sessions.map((session) => buildBillingSessionRow(session, season)));
-  const realizedSessions: BillingSessionSnapshot[] = rows
-    .filter((row) => row.isRealized)
-    .map((row) => ({
-      id: row.id,
-      sessionDate: row.sessionDate,
-      theme: row.theme,
-      presentCount: row.presentCount,
-      presentParticipants: row.presentParticipants,
-    }));
-
-  const blockingIssues = rows.flatMap((row) => {
-    if (!isSessionPast(row.sessionDate, season.endTime)) {
-      return [];
-    }
-    if (row.status !== "scheduled") {
-      return [];
-    }
-    if (row.registeredCount === 0) {
-      return [];
-    }
-    if (!row.attendanceComplete) {
-      return [`${row.sessionDate} : présences incomplètes`];
-    }
-    return [];
-  });
-
   const lastValidation = await getMonthValidation(season.id, year, monthIndex + 1);
+
+  const statusBySessionId = new Map<string, BillingAccountingStatus>();
+  if (lastValidation) {
+    for (const snapshot of lastValidation.sessionSnapshot) {
+      statusBySessionId.set(snapshot.id, accountingStatusFromSnapshot(snapshot));
+    }
+  }
+
+  const suggestedBillableCount = countBillableSessions(
+    rows.map((row) => statusBySessionId.get(row.id) ?? row.suggestedAccountingStatus),
+  );
+
+  const hasFutureSessions = rows.some((row) => row.suggestedAccountingStatus === "future");
 
   return {
     season,
@@ -964,10 +975,8 @@ export async function getMonthBillingPreview(year: number, monthIndex: number): 
     year,
     month: monthIndex,
     sessions: rows,
-    realizedSessions,
-    computedSessionCount: realizedSessions.length,
-    blockingIssues,
-    canValidate: blockingIssues.length === 0,
+    suggestedBillableCount,
+    canValidate: !hasFutureSessions,
     lastValidation,
   };
 }
@@ -977,16 +986,39 @@ export async function saveAndSendMonthValidation(input: {
   monthIndex: number;
   billedSessionCount: number;
   billingNote?: string | null;
+  sessionStatuses: Array<{ sessionId: string; accountingStatus: BillingAccountingStatus }>;
   sendEmail: boolean;
 }) {
   const preview = await getMonthBillingPreview(input.year, input.monthIndex);
   if (!preview.canValidate) {
-    throw new Error("BLOCKING_ISSUES");
+    throw new Error("FUTURE_SESSIONS");
   }
 
   if (input.billedSessionCount < 0 || !Number.isFinite(input.billedSessionCount)) {
     throw new Error("INVALID_BILLED_COUNT");
   }
+
+  const statusBySessionId = Object.fromEntries(
+    input.sessionStatuses.map((item) => [item.sessionId, item.accountingStatus]),
+  ) as Record<string, BillingAccountingStatus>;
+
+  const allSnapshots = preview.sessions.map((row) => {
+    const accountingStatus = statusBySessionId[row.id] ?? row.suggestedAccountingStatus;
+    return {
+      id: row.id,
+      sessionDate: row.sessionDate,
+      theme: row.theme,
+      registeredCount: row.registeredCount,
+      presentCount: row.presentCount,
+      accountingStatus,
+      presentParticipants: row.presentParticipants,
+    };
+  });
+
+  const billableSnapshots = billableSnapshotsFromRows(preview.sessions, statusBySessionId);
+  const computedSessionCount = countBillableSessions(
+    preview.sessions.map((row) => statusBySessionId[row.id] ?? row.suggestedAccountingStatus),
+  );
 
   const month = input.monthIndex + 1;
   const existing = await getMonthValidation(preview.season.id, input.year, month);
@@ -997,10 +1029,10 @@ export async function saveAndSendMonthValidation(input: {
     season_id: preview.season.id,
     year: input.year,
     month,
-    computed_session_count: preview.computedSessionCount,
+    computed_session_count: computedSessionCount,
     billed_session_count: input.billedSessionCount,
     billing_note: input.billingNote?.trim() || null,
-    session_snapshot: preview.realizedSessions,
+    session_snapshot: allSnapshots,
     updated_at: new Date().toISOString(),
   };
 
@@ -1029,8 +1061,13 @@ export async function saveAndSendMonthValidation(input: {
   }
 
   if (input.sendEmail) {
-    const treasurers = await listTreasurerEmails();
-    if (treasurers.length === 0) {
+    const recipients = await listBillingRecipients();
+    const to = recipients.filter((item) => item.recipientType === "treasurer").map((item) => item.email);
+    const cc = recipients
+      .filter((item) => item.recipientType === "coach" || item.recipientType === "billing_manager")
+      .map((item) => item.email);
+
+    if (to.length === 0) {
       throw new Error("NO_TREASURERS");
     }
 
@@ -1040,18 +1077,20 @@ export async function saveAndSendMonthValidation(input: {
     const pdfBytes = await buildBillingValidationPdf({
       season: preview.season,
       monthLabel: preview.monthLabel,
-      computedSessionCount: preview.computedSessionCount,
+      computedSessionCount,
       billedSessionCount: input.billedSessionCount,
       billingNote: input.billingNote?.trim() || null,
-      realizedSessions: preview.realizedSessions,
+      realizedSessions: billableSnapshots,
+      allSessions: allSnapshots,
     });
 
     const filename = `ppg-facturation-${input.year}-${String(month).padStart(2, "0")}.pdf`;
     await sendBillingValidationEmail({
-      to: treasurers.map((item) => item.email),
+      to,
+      cc,
       monthLabel: preview.monthLabel,
       billedSessionCount: input.billedSessionCount,
-      computedSessionCount: preview.computedSessionCount,
+      computedSessionCount,
       billingNote: input.billingNote?.trim() || null,
       pdfBytes,
       filename,
@@ -1074,6 +1113,94 @@ export async function saveAndSendMonthValidation(input: {
     validation = mapMonthValidation(data as MonthValidationRow);
   }
 
-  return { preview, validation, isResend };
+  return { preview, validation, isResend, billableSnapshots, allSnapshots };
+}
+
+export async function getLastSessionOfMonth(seasonId: string, year: number, monthIndex: number) {
+  const monthKey = toMonthKey(year, monthIndex);
+  const sessions = (await getSessionsForSeason(seasonId))
+    .filter((session) => session.sessionDate.startsWith(monthKey))
+    .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
+  return sessions[sessions.length - 1] ?? null;
+}
+
+export async function wasMonthReminderSent(seasonId: string, year: number, month: number) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_month_reminders")
+    .select("id")
+    .eq("season_id", seasonId)
+    .eq("year", year)
+    .eq("month", month)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return Boolean(data);
+}
+
+export async function markMonthReminderSent(seasonId: string, year: number, month: number) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("ppg_month_reminders").upsert(
+    {
+      season_id: seasonId,
+      year,
+      month,
+      sent_at: new Date().toISOString(),
+    },
+    { onConflict: "season_id,year,month" },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+export async function maybeSendMonthValidationReminder() {
+  const season = await getActiveSeason();
+  if (!season || !process.env.BREVO_API_KEY) {
+    return { sent: false, reason: "NOT_CONFIGURED" as const };
+  }
+
+  const parisNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Paris" }));
+  const year = parisNow.getFullYear();
+  const monthIndex = parisNow.getMonth();
+  const month = monthIndex + 1;
+
+  const lastSession = await getLastSessionOfMonth(season.id, year, monthIndex);
+  if (!lastSession) {
+    return { sent: false, reason: "NO_SESSION" as const };
+  }
+
+  if (!isSessionPast(lastSession.sessionDate, season.endTime)) {
+    return { sent: false, reason: "SESSION_NOT_ENDED" as const };
+  }
+
+  if (await wasMonthReminderSent(season.id, year, month)) {
+    return { sent: false, reason: "ALREADY_SENT" as const };
+  }
+
+  const existingValidation = await getMonthValidation(season.id, year, month);
+  if (existingValidation?.lastSentAt) {
+    await markMonthReminderSent(season.id, year, month);
+    return { sent: false, reason: "ALREADY_VALIDATED" as const };
+  }
+
+  const managers = await listBillingRecipients("billing_manager");
+  if (managers.length === 0) {
+    return { sent: false, reason: "NO_MANAGER_EMAIL" as const };
+  }
+
+  const { sendValidationReminderEmail } = await import("@/lib/email");
+  const monthLabel = formatMonthYear(year, monthIndex);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://ppg-sausset.vercel.app";
+
+  await sendValidationReminderEmail({
+    to: managers.map((item) => item.email),
+    monthLabel,
+    appUrl,
+  });
+
+  await markMonthReminderSent(season.id, year, month);
+  return { sent: true, monthLabel };
 }
 

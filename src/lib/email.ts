@@ -4,6 +4,7 @@ export function isBrevoConfigured() {
 
 export async function sendBillingValidationEmail(input: {
   to: string[];
+  cc?: string[];
   monthLabel: string;
   billedSessionCount: number;
   computedSessionCount: number;
@@ -42,6 +43,51 @@ export async function sendBillingValidationEmail(input: {
     <p>Cordialement,<br/>PPG Courir à Sausset</p>
   `.trim();
 
+  await postBrevoEmail({
+    sender: { name: senderName, email: senderEmail },
+    to: input.to.map((email) => ({ email })),
+    cc: (input.cc ?? []).map((email) => ({ email })),
+    subject: `PPG Sausset — Cours validés — ${input.monthLabel}`,
+    htmlContent,
+    attachment: [
+      {
+        name: input.filename,
+        content: Buffer.from(input.pdfBytes).toString("base64"),
+      },
+    ],
+  });
+}
+
+export async function sendValidationReminderEmail(input: {
+  to: string[];
+  monthLabel: string;
+  appUrl: string;
+}) {
+  if (!isBrevoConfigured()) {
+    throw new Error("BREVO_NOT_CONFIGURED");
+  }
+
+  const senderName = process.env.BREVO_SENDER_NAME ?? "PPG Courir à Sausset";
+  const senderEmail = process.env.BREVO_SENDER_EMAIL!;
+  const facturationUrl = `${input.appUrl.replace(/\/$/, "")}/admin/facturation`;
+
+  const htmlContent = `
+    <p>Bonjour Suzanne,</p>
+    <p>La dernière séance PPG de <strong>${escapeHtml(input.monthLabel)}</strong> est terminée.</p>
+    <p>Vous pouvez maintenant valider le mois comptablement et envoyer le récapitulatif aux trésoriers.</p>
+    <p><a href="${escapeHtml(facturationUrl)}">Ouvrir la facturation PPG</a></p>
+    <p>Cordialement,<br/>PPG Courir à Sausset</p>
+  `.trim();
+
+  await postBrevoEmail({
+    sender: { name: senderName, email: senderEmail },
+    to: input.to.map((email) => ({ email })),
+    subject: `PPG Sausset — À valider : ${input.monthLabel}`,
+    htmlContent,
+  });
+}
+
+async function postBrevoEmail(body: Record<string, unknown>) {
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -49,23 +95,12 @@ export async function sendBillingValidationEmail(input: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({
-      sender: { name: senderName, email: senderEmail },
-      to: input.to.map((email) => ({ email })),
-      subject: `PPG Sausset — Cours validés — ${input.monthLabel}`,
-      htmlContent,
-      attachment: [
-        {
-          name: input.filename,
-          content: Buffer.from(input.pdfBytes).toString("base64"),
-        },
-      ],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`BREVO_SEND_FAILED:${response.status}:${body}`);
+    const text = await response.text();
+    throw new Error(`BREVO_SEND_FAILED:${response.status}:${text}`);
   }
 }
 

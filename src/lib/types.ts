@@ -93,14 +93,26 @@ export type TreasurerEmail = {
   id: string;
   email: string;
   label: string | null;
+  recipientType: BillingRecipientType;
   createdAt: string;
 };
+
+export type BillingRecipientType = "treasurer" | "coach" | "billing_manager";
+
+export type BillingAccountingStatus =
+  | "realized"
+  | "cancelled"
+  | "rescheduled"
+  | "not_held"
+  | "future";
 
 export type BillingSessionSnapshot = {
   id: string;
   sessionDate: string;
   theme: string | null;
+  registeredCount: number;
   presentCount: number;
+  accountingStatus: BillingAccountingStatus;
   presentParticipants: { firstName: string; lastName: string }[];
 };
 
@@ -126,10 +138,10 @@ export type BillingSessionRow = {
   status: SessionStatus;
   registeredCount: number;
   presentCount: number;
-  attendanceComplete: boolean;
-  isRealized: boolean;
+  attendanceMarkedCount: number;
+  suggestedAccountingStatus: BillingAccountingStatus;
   presentParticipants: { firstName: string; lastName: string }[];
-  issues: string[];
+  registeredParticipants: { firstName: string; lastName: string }[];
 };
 
 export type MonthBillingPreview = {
@@ -138,9 +150,7 @@ export type MonthBillingPreview = {
   year: number;
   month: number;
   sessions: BillingSessionRow[];
-  realizedSessions: BillingSessionSnapshot[];
-  computedSessionCount: number;
-  blockingIssues: string[];
+  suggestedBillableCount: number;
   canValidate: boolean;
   lastValidation: MonthValidation | null;
 };

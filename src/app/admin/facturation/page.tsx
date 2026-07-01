@@ -2,24 +2,67 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { ACCOUNTING_STATUS_LABELS } from "@/lib/billing";
 import { formatMonthYear, formatParisShortDate, parseMonthKey } from "@/lib/calendar";
-import type { MonthBillingPreview, MonthValidation, TreasurerEmail } from "@/lib/types";
+import type {
+  BillingAccountingStatus,
+  BillingRecipientType,
+  BillingSessionRow,
+  MonthBillingPreview,
+  MonthValidation,
+  TreasurerEmail,
+} from "@/lib/types";
+
+const RECIPIENT_SECTIONS: Array<{ type: BillingRecipientType; title: string; hint: string }> = [
+  {
+    type: "treasurer",
+    title: "Trésoriers",
+    hint: "Destinataires principaux du PDF de facturation.",
+  },
+  {
+    type: "coach",
+    title: "Manon (coach)",
+    hint: "Reçoit une copie de l'e-mail de validation.",
+  },
+  {
+    type: "billing_manager",
+    title: "Suzanne (responsable PPG)",
+    hint: "Reçoit une copie + le rappel après le dernier jeudi du mois.",
+  },
+];
+
+function initialStatuses(preview: MonthBillingPreview) {
+  const map: Record<string, BillingAccountingStatus> = {};
+  for (const session of preview.sessions) {
+    const saved = preview.lastValidation?.sessionSnapshot.find((item) => item.id === session.id);
+    map[session.id] = saved?.accountingStatus ?? session.suggestedAccountingStatus;
+  }
+  return map;
+}
+
+function countBillable(statuses: Record<string, BillingAccountingStatus>) {
+  return Object.values(statuses).filter((status) => status === "realized").length;
+}
 
 export default function FacturationPage() {
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [treasurers, setTreasurers] = useState<TreasurerEmail[]>([]);
+  const [recipients, setRecipients] = useState<TreasurerEmail[]>([]);
   const [validations, setValidations] = useState<MonthValidation[]>([]);
   const [brevoConfigured, setBrevoConfigured] = useState(false);
-  const [newTreasurerEmail, setNewTreasurerEmail] = useState("");
-  const [newTreasurerLabel, setNewTreasurerLabel] = useState("");
   const [monthKeys, setMonthKeys] = useState<string[]>([]);
   const [previewMonthKey, setPreviewMonthKey] = useState<string | null>(null);
   const [preview, setPreview] = useState<MonthBillingPreview | null>(null);
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, BillingAccountingStatus>>({});
   const [billedCount, setBilledCount] = useState(0);
   const [billingNote, setBillingNote] = useState("");
+  const [newEmails, setNewEmails] = useState<Record<BillingRecipientType, { email: string; label: string }>>({
+    treasurer: { email: "", label: "" },
+    coach: { email: "", label: "" },
+    billing_manager: { email: "", label: "" },
+  });
 
   async function refresh() {
     const ping = await fetch("/api/admin?action=ping");
@@ -30,20 +73,20 @@ export default function FacturationPage() {
       return;
     }
 
-    const [configRes, treasurersRes, validationsRes, adminRes] = await Promise.all([
+    const [configRes, recipientsRes, validationsRes, adminRes] = await Promise.all([
       fetch("/api/admin/billing?action=config"),
-      fetch("/api/admin/billing?action=treasurers"),
+      fetch("/api/admin/billing?action=recipients"),
       fetch("/api/admin/billing?action=validations"),
       fetch("/api/admin"),
     ]);
 
     const configData = await configRes.json();
-    const treasurersData = await treasurersRes.json();
+    const recipientsData = await recipientsRes.json();
     const validationsData = await validationsRes.json();
     const adminData = await adminRes.json();
 
     setBrevoConfigured(Boolean(configData.brevoConfigured));
-    setTreasurers(treasurersData.treasurers ?? []);
+    setRecipients(recipientsData.recipients ?? []);
     setValidations(validationsData.validations ?? []);
 
     const keys = new Set<string>();
@@ -66,7 +109,20 @@ export default function FacturationPage() {
     return map;
   }, [validations]);
 
-  async function addTreasurer() {
+  const recipientsByType = useMemo(() => {
+    const map: Record<BillingRecipientType, TreasurerEmail[]> = {
+      treasurer: [],
+      coach: [],
+      billing_manager: [],
+    };
+    for (const recipient of recipients) {
+      map[recipient.recipientType].push(recipient);
+    }
+    return map;
+  }, [recipients]);
+
+  async function addRecipient(type: BillingRecipientType) {
+    const draft = newEmails[type];
     setBusy(true);
     setError(null);
     try {
@@ -74,18 +130,18 @@ export default function FacturationPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "treasurers.add",
-          email: newTreasurerEmail,
-          label: newTreasurerLabel,
+          action: "recipients.add",
+          recipientType: type,
+          email: draft.email,
+          label: draft.label,
         }),
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error ?? "Erreur");
       }
-      setTreasurers(data.treasurers ?? []);
-      setNewTreasurerEmail("");
-      setNewTreasurerLabel("");
+      setRecipients(data.recipients ?? []);
+      setNewEmails((current) => ({ ...current, [type]: { email: "", label: "" } }));
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : "Erreur");
     } finally {
@@ -93,17 +149,17 @@ export default function FacturationPage() {
     }
   }
 
-  async function removeTreasurer(id: string) {
+  async function removeRecipient(id: string) {
     setBusy(true);
     try {
       const response = await fetch("/api/admin/billing", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "treasurers.remove", id }),
+        body: JSON.stringify({ action: "recipients.remove", id }),
       });
       const data = await response.json();
       if (response.ok) {
-        setTreasurers(data.treasurers ?? []);
+        setRecipients(data.recipients ?? []);
       }
     } finally {
       setBusy(false);
@@ -122,8 +178,10 @@ export default function FacturationPage() {
         throw new Error(data.error ?? "Erreur");
       }
       const nextPreview = data.preview as MonthBillingPreview;
+      const statuses = initialStatuses(nextPreview);
       setPreview(nextPreview);
-      setBilledCount(nextPreview.lastValidation?.billedSessionCount ?? nextPreview.computedSessionCount);
+      setSessionStatuses(statuses);
+      setBilledCount(nextPreview.lastValidation?.billedSessionCount ?? countBillable(statuses));
       setBillingNote(nextPreview.lastValidation?.billingNote ?? "");
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Erreur");
@@ -133,6 +191,14 @@ export default function FacturationPage() {
     }
   }
 
+  function updateSessionStatus(sessionId: string, accountingStatus: BillingAccountingStatus) {
+    setSessionStatuses((current) => {
+      const next = { ...current, [sessionId]: accountingStatus };
+      setBilledCount(countBillable(next));
+      return next;
+    });
+  }
+
   async function sendValidation() {
     if (!previewMonthKey || !preview) {
       return;
@@ -140,8 +206,8 @@ export default function FacturationPage() {
     const { year, month } = parseMonthKey(previewMonthKey);
     const validation = validationByMonth.get(previewMonthKey);
     const confirmText = validation?.lastSentAt
-      ? "Renvoyer l'e-mail aux trésoriers avec les données mises à jour ?"
-      : "Valider ce mois et envoyer l'e-mail aux trésoriers ?";
+      ? "Renvoyer l'e-mail aux trésoriers (Manon et Suzanne en copie) ?"
+      : "Valider ce mois comptablement et envoyer l'e-mail ?";
     if (!window.confirm(confirmText)) {
       return;
     }
@@ -158,6 +224,10 @@ export default function FacturationPage() {
           month: month + 1,
           billedSessionCount: billedCount,
           billingNote,
+          sessionStatuses: Object.entries(sessionStatuses).map(([sessionId, accountingStatus]) => ({
+            sessionId,
+            accountingStatus,
+          })),
           sendEmail: true,
         }),
       });
@@ -165,7 +235,6 @@ export default function FacturationPage() {
       if (!response.ok) {
         throw new Error(data.error ?? "Erreur");
       }
-      setPreview(data.preview ?? preview);
       await refresh();
       setPreviewMonthKey(null);
       setPreview(null);
@@ -174,6 +243,51 @@ export default function FacturationPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function renderSessionRow(session: BillingSessionRow) {
+    const status = sessionStatuses[session.id] ?? session.suggestedAccountingStatus;
+    const isFuture = status === "future";
+
+    return (
+      <article key={session.id} className="rounded-xl border border-[var(--border)] px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-[12rem] flex-1">
+            <p className="font-medium">{formatParisShortDate(session.sessionDate)}</p>
+            {session.theme ? <p className="muted text-sm">{session.theme}</p> : null}
+            <p className="muted mt-1 text-sm">
+              {session.registeredCount} inscrit(s) en ligne
+              {session.registeredCount > 0 ? (
+                <> · {session.registeredParticipants.map((p) => `${p.firstName} ${p.lastName}`).join(", ")}</>
+              ) : null}
+            </p>
+            <p className="muted text-sm">
+              {session.presentCount} présent(s) saisi(s)
+              {session.attendanceMarkedCount < session.registeredCount && session.registeredCount > 0 ? (
+                <span className="text-[var(--warn)]"> · présences partielles</span>
+              ) : null}
+            </p>
+          </div>
+          <label className="space-y-1">
+            <span className="text-xs font-medium">Statut comptable</span>
+            <select
+              className="input min-w-[12rem]"
+              value={status}
+              disabled={isFuture}
+              onChange={(event) =>
+                updateSessionStatus(session.id, event.target.value as BillingAccountingStatus)
+              }
+            >
+              {(Object.keys(ACCOUNTING_STATUS_LABELS) as BillingAccountingStatus[]).map((value) => (
+                <option key={value} value={value} disabled={value === "future" && !isFuture}>
+                  {ACCOUNTING_STATUS_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </article>
+    );
   }
 
   if (loading) {
@@ -202,6 +316,8 @@ export default function FacturationPage() {
     );
   }
 
+  const treasurersCount = recipientsByType.treasurer.length;
+
   return (
     <div className="container max-w-3xl space-y-6">
       <section className="card p-6">
@@ -209,7 +325,8 @@ export default function FacturationPage() {
           <div>
             <h1 className="text-2xl font-bold">Facturation PPG</h1>
             <p className="muted mt-2 text-sm">
-              Validation mensuelle et envoi aux trésoriers. Accès responsable PPG uniquement.
+              Les adhérents s&apos;inscrivent seuls en ligne. Suzanne ne crée pas les inscriptions : elle marque
+              seulement les présences le jeudi soir, puis valide le mois ici.
             </p>
           </div>
           <Link href="/admin" className="btn btn-secondary">
@@ -218,61 +335,76 @@ export default function FacturationPage() {
         </div>
         {!brevoConfigured ? (
           <p className="mt-4 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">
-            Brevo n&apos;est pas encore configuré : l&apos;envoi d&apos;e-mails ne fonctionnera pas tant que les
-            variables BREVO ne sont pas ajoutées sur Vercel.
+            Brevo n&apos;est pas encore configuré sur Vercel.
           </p>
         ) : null}
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
       </section>
 
-      <section className="card p-6">
-        <h2 className="text-xl font-bold">E-mails des trésoriers</h2>
-        <p className="muted mt-2 text-sm">Modifiables directement ici, sans toucher au code.</p>
-        <ul className="mt-4 space-y-2">
-          {treasurers.length === 0 ? (
-            <li className="muted text-sm">Aucun destinataire pour le moment.</li>
-          ) : (
-            treasurers.map((treasurer) => (
-              <li
-                key={treasurer.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[var(--bg)] px-3 py-2"
-              >
-                <span>
-                  {treasurer.email}
-                  {treasurer.label ? <span className="muted text-sm"> · {treasurer.label}</span> : null}
-                </span>
-                <button type="button" className="btn btn-danger text-xs" onClick={() => removeTreasurer(treasurer.id)}>
-                  Retirer
-                </button>
-              </li>
-            ))
-          )}
-        </ul>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <input
-            className="input min-w-[14rem] flex-1"
-            type="email"
-            placeholder="E-mail trésorier"
-            value={newTreasurerEmail}
-            onChange={(event) => setNewTreasurerEmail(event.target.value)}
-          />
-          <input
-            className="input min-w-[10rem]"
-            placeholder="Libellé (optionnel)"
-            value={newTreasurerLabel}
-            onChange={(event) => setNewTreasurerLabel(event.target.value)}
-          />
-          <button type="button" className="btn btn-primary" disabled={busy || !newTreasurerEmail.trim()} onClick={addTreasurer}>
-            Ajouter
-          </button>
-        </div>
-      </section>
+      {RECIPIENT_SECTIONS.map((section) => (
+        <section key={section.type} className="card p-6">
+          <h2 className="text-xl font-bold">{section.title}</h2>
+          <p className="muted mt-2 text-sm">{section.hint}</p>
+          <ul className="mt-4 space-y-2">
+            {recipientsByType[section.type].length === 0 ? (
+              <li className="muted text-sm">Aucun e-mail configuré.</li>
+            ) : (
+              recipientsByType[section.type].map((recipient) => (
+                <li
+                  key={recipient.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[var(--bg)] px-3 py-2"
+                >
+                  <span>
+                    {recipient.email}
+                    {recipient.label ? <span className="muted text-sm"> · {recipient.label}</span> : null}
+                  </span>
+                  <button type="button" className="btn btn-danger text-xs" onClick={() => removeRecipient(recipient.id)}>
+                    Retirer
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <input
+              className="input min-w-[14rem] flex-1"
+              type="email"
+              placeholder="E-mail"
+              value={newEmails[section.type].email}
+              onChange={(event) =>
+                setNewEmails((current) => ({
+                  ...current,
+                  [section.type]: { ...current[section.type], email: event.target.value },
+                }))
+              }
+            />
+            <input
+              className="input min-w-[10rem]"
+              placeholder="Libellé (optionnel)"
+              value={newEmails[section.type].label}
+              onChange={(event) =>
+                setNewEmails((current) => ({
+                  ...current,
+                  [section.type]: { ...current[section.type], label: event.target.value },
+                }))
+              }
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || !newEmails[section.type].email.trim()}
+              onClick={() => addRecipient(section.type)}
+            >
+              Ajouter
+            </button>
+          </div>
+        </section>
+      ))}
 
       <section className="card p-6">
         <h2 className="text-xl font-bold">Valider les cours du mois</h2>
         <p className="muted mt-2 text-sm">
-          Une séance est comptée comme réalisée si elle est passée, non annulée, avec au moins un présent et toutes les
-          présences renseignées. Vous pouvez corriger le nombre de séances facturées avant l&apos;envoi.
+          Pour chaque séance, le statut est pré-rempli automatiquement. Vous pouvez le corriger avant validation.
         </p>
         <ul className="mt-4 space-y-2">
           {monthKeys.map((monthKey) => {
@@ -288,20 +420,14 @@ export default function FacturationPage() {
                   <p className="font-medium capitalize">{label}</p>
                   {validation?.lastSentAt ? (
                     <p className="muted text-sm">
-                      Envoyé {validation.sendCount} fois · dernière fois le{" "}
-                      {new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(
-                        new Date(validation.lastSentAt),
-                      )}
-                      {validation.billedSessionCount !== validation.computedSessionCount
-                        ? ` · ${validation.billedSessionCount} séance(s) facturée(s) (calcul : ${validation.computedSessionCount})`
-                        : ` · ${validation.billedSessionCount} séance(s)`}
+                      Validé · envoyé {validation.sendCount} fois · {validation.billedSessionCount} séance(s) facturée(s)
                     </p>
                   ) : (
                     <p className="muted text-sm">Pas encore validé</p>
                   )}
                 </div>
                 <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openPreview(monthKey)}>
-                  {validation?.lastSentAt ? "Renvoyer" : "Valider"}
+                  {validation?.lastSentAt ? "Modifier / renvoyer" : "Valider"}
                 </button>
               </li>
             );
@@ -311,26 +437,24 @@ export default function FacturationPage() {
 
       {preview && previewMonthKey ? (
         <section className="card p-6">
-          <h2 className="text-xl font-bold capitalize">Aperçu — {preview.monthLabel}</h2>
+          <h2 className="text-xl font-bold capitalize">Validation — {preview.monthLabel}</h2>
 
-          {preview.blockingIssues.length > 0 ? (
-            <div className="mt-4 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
-              <p className="font-semibold">Validation bloquée :</p>
-              <ul className="mt-1 list-disc pl-5">
-                {preview.blockingIssues.map((issue) => (
-                  <li key={issue}>{issue}</li>
-                ))}
-              </ul>
-            </div>
+          {!preview.canValidate ? (
+            <p className="mt-4 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">
+              Ce mois contient encore des séances à venir. Revenez après le dernier jeudi.
+            </p>
           ) : null}
 
+          <div className="mt-4 space-y-3">
+            {preview.sessions.map((session) => renderSessionRow(session))}
+          </div>
+
           <p className="mt-4 text-sm">
-            <strong>{preview.computedSessionCount}</strong> séance{preview.computedSessionCount > 1 ? "s" : ""} réalisée
-            {preview.computedSessionCount > 1 ? "s" : ""} (calcul automatique)
+            Calcul automatique : <strong>{countBillable(sessionStatuses)}</strong> séance(s) facturable(s)
           </p>
 
           <label className="mt-4 block space-y-1">
-            <span className="text-sm font-medium">Nombre de séances pour la facturation</span>
+            <span className="text-sm font-medium">Nombre de séances pour la facturation (correction manuelle)</span>
             <input
               className="input max-w-[8rem]"
               type="number"
@@ -344,38 +468,19 @@ export default function FacturationPage() {
             <span className="text-sm font-medium">Note pour les trésoriers (optionnel)</span>
             <textarea
               className="input min-h-20"
-              placeholder="Ex. : 3 séances facturées (une séance reportée en décembre)"
               value={billingNote}
               onChange={(event) => setBillingNote(event.target.value)}
             />
           </label>
 
-          <div className="mt-4 space-y-3">
-            <h3 className="text-sm font-semibold">Séances réalisées</h3>
-            {preview.realizedSessions.length === 0 ? (
-              <p className="muted text-sm">Aucune séance réalisée selon les critères.</p>
-            ) : (
-              preview.realizedSessions.map((session) => (
-                <article key={session.id} className="rounded-xl bg-[var(--bg)] px-4 py-3">
-                  <p className="font-medium">{formatParisShortDate(session.sessionDate)}</p>
-                  {session.theme ? <p className="muted text-sm">{session.theme}</p> : null}
-                  <p className="mt-1 text-sm">
-                    {session.presentCount} présent{session.presentCount > 1 ? "s" : ""} :{" "}
-                    {session.presentParticipants.map((p) => `${p.firstName} ${p.lastName}`).join(", ")}
-                  </p>
-                </article>
-              ))
-            )}
-          </div>
-
           <div className="mt-5 flex flex-wrap gap-2">
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy || !preview.canValidate || treasurers.length === 0 || !brevoConfigured}
+              disabled={busy || !preview.canValidate || treasurersCount === 0 || !brevoConfigured}
               onClick={sendValidation}
             >
-              {preview.lastValidation?.lastSentAt ? "Renvoyer aux trésoriers" : "Valider et envoyer"}
+              {preview.lastValidation?.lastSentAt ? "Valider et renvoyer" : "Valider et envoyer"}
             </button>
             <button
               type="button"

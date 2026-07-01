@@ -2,15 +2,16 @@ import { NextResponse } from "next/server";
 import { isSuperAdminAuthenticated } from "@/lib/auth";
 import { isBrevoConfigured } from "@/lib/email";
 import {
-  addTreasurerEmail,
+  addBillingRecipient,
   getActiveSeason,
   getMonthBillingPreview,
+  listBillingRecipients,
   listMonthValidations,
-  listTreasurerEmails,
-  removeTreasurerEmail,
+  removeBillingRecipient,
   saveAndSendMonthValidation,
 } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
+import type { BillingAccountingStatus, BillingRecipientType } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -41,9 +42,14 @@ export async function GET(request: Request) {
     });
   }
 
+  if (action === "recipients") {
+    const recipients = await listBillingRecipients();
+    return NextResponse.json({ recipients });
+  }
+
   if (action === "treasurers") {
-    const treasurers = await listTreasurerEmails();
-    return NextResponse.json({ treasurers });
+    const treasurers = await listBillingRecipients("treasurer");
+    return NextResponse.json({ treasurers, recipients: await listBillingRecipients() });
   }
 
   if (action === "validations") {
@@ -86,11 +92,16 @@ export async function POST(request: Request) {
   const body = (await request.json()) as Record<string, unknown>;
   const action = String(body.action ?? "");
 
-  if (action === "treasurers.add") {
+  if (action === "recipients.add" || action === "treasurers.add") {
     try {
-      const treasurer = await addTreasurerEmail(String(body.email ?? ""), body.label ? String(body.label) : null);
-      const treasurers = await listTreasurerEmails();
-      return NextResponse.json({ treasurer, treasurers });
+      const recipientType = (body.recipientType ? String(body.recipientType) : "treasurer") as BillingRecipientType;
+      const recipient = await addBillingRecipient(
+        String(body.email ?? ""),
+        recipientType,
+        body.label ? String(body.label) : null,
+      );
+      const recipients = await listBillingRecipients();
+      return NextResponse.json({ recipient, recipients, treasurers: recipients.filter((r) => r.recipientType === "treasurer") });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erreur";
       if (message === "INVALID_EMAIL") {
@@ -100,14 +111,14 @@ export async function POST(request: Request) {
     }
   }
 
-  if (action === "treasurers.remove") {
+  if (action === "recipients.remove" || action === "treasurers.remove") {
     const id = String(body.id ?? "");
     if (!id) {
       return NextResponse.json({ error: "Identifiant manquant." }, { status: 400 });
     }
-    await removeTreasurerEmail(id);
-    const treasurers = await listTreasurerEmails();
-    return NextResponse.json({ treasurers });
+    await removeBillingRecipient(id);
+    const recipients = await listBillingRecipients();
+    return NextResponse.json({ recipients, treasurers: recipients.filter((r) => r.recipientType === "treasurer") });
   }
 
   if (action === "send") {
@@ -116,6 +127,9 @@ export async function POST(request: Request) {
     const billedSessionCount = Number(body.billedSessionCount);
     const billingNote = body.billingNote ? String(body.billingNote) : null;
     const sendEmail = body.sendEmail !== false;
+    const sessionStatuses = Array.isArray(body.sessionStatuses)
+      ? (body.sessionStatuses as Array<{ sessionId: string; accountingStatus: BillingAccountingStatus }>)
+      : [];
 
     if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
       return NextResponse.json({ error: "Année ou mois invalide." }, { status: 400 });
@@ -134,14 +148,15 @@ export async function POST(request: Request) {
         monthIndex: month - 1,
         billedSessionCount,
         billingNote,
+        sessionStatuses,
         sendEmail,
       });
       return NextResponse.json(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erreur";
-      if (message === "BLOCKING_ISSUES") {
+      if (message === "FUTURE_SESSIONS") {
         return NextResponse.json(
-          { error: "Des présences sont incomplètes. Complétez les feuilles de présence avant validation." },
+          { error: "Le mois contient encore des séances à venir. Attendez la fin du dernier jeudi." },
           { status: 400 },
         );
       }

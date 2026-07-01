@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { ACCOUNTING_STATUS_LABELS } from "@/lib/billing";
 import { formatParisDate, formatTimeLabel } from "@/lib/calendar";
 import type { BillingSessionSnapshot, Season } from "@/lib/types";
 
@@ -27,6 +28,7 @@ export async function buildBillingValidationPdf(input: {
   billedSessionCount: number;
   billingNote: string | null;
   realizedSessions: BillingSessionSnapshot[];
+  allSessions: BillingSessionSnapshot[];
 }) {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -71,9 +73,22 @@ export async function buildBillingValidationPdf(input: {
   }
   y -= 8;
 
+  drawLine("Récapitulatif du mois", { size: 11, bold: true });
+  for (const session of input.allSessions) {
+    if (session.accountingStatus === "future") {
+      continue;
+    }
+    drawLine(
+      `${formatParisDate(session.sessionDate)} — ${ACCOUNTING_STATUS_LABELS[session.accountingStatus]}`,
+      { size: 10, indent: 8 },
+    );
+  }
+  y -= 8;
+
   const totalPresences = input.realizedSessions.reduce((sum, session) => sum + session.presentCount, 0);
-  drawLine(`${input.realizedSessions.length} séance(s) détaillée(s) · ${totalPresences} présence(s)`, {
+  drawLine(`Détail des ${input.realizedSessions.length} séance(s) facturable(s) · ${totalPresences} présence(s)`, {
     size: 10,
+    bold: true,
   });
 
   for (const session of input.realizedSessions) {
@@ -91,7 +106,10 @@ export async function buildBillingValidationPdf(input: {
     if (session.theme?.trim()) {
       drawLine(`Thème : ${session.theme.trim()}`, { size: 10, indent: 8 });
     }
-    drawLine(`${session.presentCount} présent${session.presentCount > 1 ? "s" : ""}`, { size: 10, indent: 8 });
+    drawLine(
+      `${session.registeredCount} inscrit(s) en ligne · ${session.presentCount} présent(s)`,
+      { size: 10, indent: 8 },
+    );
 
     if (session.presentParticipants.length === 0) {
       drawLine("Aucun présent enregistré.", { size: 10, indent: 16 });

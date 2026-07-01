@@ -43,17 +43,19 @@ Copier `.env.local.example` → `.env.local`, puis renseigner les clés depuis
 | `BREVO_API_KEY` | Clé API Brevo pour l'envoi aux trésoriers |
 | `BREVO_SENDER_EMAIL` | E-mail expéditeur vérifié dans Brevo |
 | `BREVO_SENDER_NAME` | Nom affiché (ex. `PPG Courir à Sausset`) |
+| `CRON_SECRET` | Secret pour le rappel automatique (cron Vercel) |
 | `NEXT_PUBLIC_APP_URL` | URL publique (liens personnels) |
 
 ## Facturation (Suzanne)
 
 - `/admin/facturation` — réservé au PIN super admin (`PPG_SUPER_ADMIN_PIN`)
 - Manon (`PPG_ADMIN_PIN`) garde l'admin coach sans accès facturation
-- E-mails des trésoriers modifiables dans l'appli
-- Validation mensuelle avec correction manuelle du nombre de séances facturées
-- PDF des séances réalisées + présences envoyé via Brevo (renvoi possible)
+- **Inscriptions** : les adhérents s'inscrivent seuls en ligne ; Suzanne marque seulement les **présences**
+- **Validation mensuelle** : statut pré-rempli par séance, modifiable par Suzanne avant envoi
+- **Destinataires** configurables dans l'appli : trésoriers (principal), Manon (copie), Suzanne (copie + rappel)
+- **Rappel automatique** : e-mail à Suzanne après le dernier jeudi du mois (cron Vercel)
 
-Migration SQL : `supabase/migration_billing.sql`
+Migration SQL : `supabase/migration_billing.sql` puis `supabase/migration_billing_v2.sql`
 
 ## Configuration Brevo
 
@@ -66,8 +68,9 @@ Migration SQL : `supabase/migration_billing.sql`
    - `BREVO_SENDER_NAME` = `PPG Courir à Sausset`
    - `PPG_SUPER_ADMIN_PIN` = PIN choisi pour Suzanne
 5. Redéployer l'application
-6. Suzanne se connecte sur `/admin` avec son PIN → **Facturation trésoriers**
-7. Ajouter les e-mails des trésoriers dans l'interface
+6. Ajouter `CRON_SECRET` (chaîne aléatoire longue) sur Vercel pour le rappel automatique
+7. Suzanne se connecte sur `/admin` avec son PIN → **Facturation trésoriers**
+8. Configurer les e-mails : trésoriers, Manon (copie), Suzanne (copie + rappel)
 
 ## Premier lancement
 
