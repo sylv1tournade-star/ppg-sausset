@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  formatDayOfWeekLongCapitalized,
   formatMonthYear,
   formatParisShortDate,
   getMonthGrid,
@@ -9,6 +10,8 @@ import {
   isSessionPast,
   isSessionRegisterable,
   parseMonthKey,
+  pickAgendaMonthKey,
+  pickDefaultSessionIdInMonth,
   shiftMonthKey,
 } from "@/lib/calendar";
 import { SessionDetail } from "@/components/session-detail";
@@ -21,18 +24,12 @@ type Props = {
   focusSessionId?: string | null;
 };
 
-function pickDefaultMonth(sessions: SessionWithMeta[], season: Season) {
-  const upcoming = sessions.find((session) => isSessionRegisterable(session, season));
-  if (upcoming) {
-    return upcoming.sessionDate.slice(0, 7);
-  }
-  return sessions[0]?.sessionDate.slice(0, 7) ?? shiftMonthKey(new Date().toISOString().slice(0, 7), 0);
+function pickDefaultMonth(sessions: SessionWithMeta[]) {
+  return pickAgendaMonthKey(sessions.map((session) => session.sessionDate));
 }
 
-function pickDefaultSession(sessions: SessionWithMeta[], season: Season, monthKey: string) {
-  const inMonth = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
-  const upcoming = inMonth.find((session) => isSessionRegisterable(session, season));
-  return upcoming?.id ?? inMonth[0]?.id ?? null;
+function pickDefaultSession(sessions: SessionWithMeta[], monthKey: string) {
+  return pickDefaultSessionIdInMonth(sessions, monthKey);
 }
 
 export function SessionCalendarView({
@@ -42,9 +39,9 @@ export function SessionCalendarView({
   focusSessionId = null,
 }: Props) {
   const [sessions, setSessions] = useState(initialSessions);
-  const [monthKey, setMonthKey] = useState(() => pickDefaultMonth(initialSessions, season));
+  const [monthKey, setMonthKey] = useState(() => pickDefaultMonth(initialSessions));
   const [selectedId, setSelectedId] = useState<string | null>(() =>
-    pickDefaultSession(initialSessions, season, pickDefaultMonth(initialSessions, season)),
+    pickDefaultSession(initialSessions, pickDefaultMonth(initialSessions)),
   );
 
   useEffect(() => {
@@ -79,6 +76,7 @@ export function SessionCalendarView({
   const grid = getMonthGrid(year, month);
   const thursdaysInMonth = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  const sessionDayLabel = formatDayOfWeekLongCapitalized(season.dayOfWeek);
 
   function goMonth(delta: number) {
     const next = shiftMonthKey(monthKey, delta);
@@ -86,7 +84,7 @@ export function SessionCalendarView({
       return;
     }
     setMonthKey(next);
-    const nextSessionId = pickDefaultSession(sessions, season, next);
+    const nextSessionId = pickDefaultSession(sessions, next);
     setSelectedId(nextSessionId);
   }
 
@@ -174,11 +172,11 @@ export function SessionCalendarView({
             }
 
             const session = sessionsByDate.get(cell.date);
-            const isThursday = new Date(`${cell.date}T12:00:00`).getDay() === 4;
+            const isSessionDay = new Date(`${cell.date}T12:00:00`).getDay() === season.dayOfWeek;
             const isSelected = session?.id === selectedId;
             const past = session ? isSessionPast(session.sessionDate, season.endTime) : false;
 
-            if (!session || !isThursday) {
+            if (!session || !isSessionDay) {
               return (
                 <div
                   key={cell.date}
@@ -219,7 +217,7 @@ export function SessionCalendarView({
         </div>
 
         <p className="muted mt-4 text-xs">
-          Touchez un jeudi vert pour voir la séance. Le chiffre indique le nombre d&apos;inscrits.
+          Touchez un {sessionDayLabel.toLowerCase()} coloré pour voir la séance. Le chiffre indique le nombre d&apos;inscrits.
         </p>
       </section>
 

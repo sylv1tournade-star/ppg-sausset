@@ -322,3 +322,49 @@ export function formatSeasonScheduleShort(season: {
 }) {
   return `${formatDayOfWeekLongCapitalized(season.dayOfWeek)} ${formatTimeLabel(season.startTime)}-${formatTimeLabel(season.endTime)} - ${season.location.trim()}`;
 }
+
+export function pickAgendaMonthKey(sessionDates: string[]) {
+  if (sessionDates.length === 0) {
+    const now = new Date();
+    return toMonthKey(now.getFullYear(), now.getMonth());
+  }
+
+  const sorted = [...sessionDates].sort();
+  const min = sorted[0].slice(0, 7);
+  const max = sorted[sorted.length - 1].slice(0, 7);
+  const now = new Date();
+  const current = toMonthKey(now.getFullYear(), now.getMonth());
+
+  if (current >= min && current <= max) {
+    return current;
+  }
+
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const upcoming = sorted.find((date) => date >= today);
+  return upcoming ? upcoming.slice(0, 7) : max;
+}
+
+export function pickDefaultSessionIdInMonth(
+  sessions: Array<{ id: string; sessionDate: string; status: string }>,
+  monthKey: string,
+) {
+  const inMonth = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
+  if (inMonth.length === 0) {
+    return null;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const upcomingScheduled = inMonth.find(
+    (session) => session.sessionDate >= today && session.status === "scheduled",
+  );
+  if (upcomingScheduled) {
+    return upcomingScheduled.id;
+  }
+
+  const upcomingAny = inMonth.find((session) => session.sessionDate >= today);
+  if (upcomingAny) {
+    return upcomingAny.id;
+  }
+
+  return inMonth[inMonth.length - 1].id;
+}

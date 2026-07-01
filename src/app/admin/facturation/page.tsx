@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ACCOUNTING_STATUS_LABELS } from "@/lib/billing";
-import { formatMonthYear, formatParisShortDate, parseMonthKey } from "@/lib/calendar";
+import { formatMonthYear, formatParisShortDate, parseMonthKey, pickAgendaMonthKey } from "@/lib/calendar";
 import type {
   BillingAccountingStatus,
   BillingRecipientType,
@@ -129,6 +129,19 @@ export default function FacturationPage() {
     }
     return map;
   }, [validations]);
+
+  const sortedMonthKeys = useMemo(() => {
+    const currentMonth = pickAgendaMonthKey(monthKeys.map((key) => `${key}-01`));
+    return [...monthKeys].sort((a, b) => {
+      if (a === currentMonth) {
+        return -1;
+      }
+      if (b === currentMonth) {
+        return 1;
+      }
+      return a.localeCompare(b);
+    });
+  }, [monthKeys]);
 
   const recipientsByType = useMemo(() => {
     const map: Record<BillingRecipientType, TreasurerEmail[]> = {
@@ -451,12 +464,13 @@ export default function FacturationPage() {
         {error ? <p className="mt-3 text-sm text-[var(--danger)]">{error}</p> : null}
       </section>
 
-      <section className="card p-6">
-        <h2 className="text-xl font-bold">Adhérents à jour (adhésion payée)</h2>
-        <p className="muted mt-2 text-sm">
-          Importez la liste des membres du club. Seules ces personnes pourront créer un profil PPG. Format : une ligne
-          par personne, « Prénom Nom » ou « Prénom;Nom » (CSV).
-        </p>
+      <section className="card p-6 border-2 border-[var(--accent)]/25">
+        <h2 className="text-xl font-bold">1. Adhérents autorisés à s&apos;inscrire</h2>
+        <ol className="muted mt-3 list-decimal space-y-2 pl-5 text-sm">
+          <li>Copiez la liste des adhérents PPG payants (une personne par ligne).</li>
+          <li>Collez-la ci-dessous, format « Prénom Nom » ou « Prénom;Nom ».</li>
+          <li>Cliquez <strong className="text-[var(--ink)]">Importer</strong> — seules ces personnes pourront créer un profil sur le site.</li>
+        </ol>
         {paidMembers.length === 0 ? (
           <p className="mt-3 rounded-lg border border-[var(--danger)] bg-[var(--danger)]/10 px-3 py-2 text-sm text-[var(--danger)]">
             Liste vide : les inscriptions publiques sont bloquées tant que cette liste n&apos;est pas importée.
@@ -566,7 +580,7 @@ export default function FacturationPage() {
           Pour chaque séance, le statut est pré-rempli automatiquement. Vous pouvez le corriger avant validation.
         </p>
         <ul className="mt-4 space-y-2">
-          {monthKeys.map((monthKey) => {
+          {sortedMonthKeys.map((monthKey) => {
             const { year, month } = parseMonthKey(monthKey);
             const label = formatMonthYear(year, month);
             const validation = validationByMonth.get(monthKey);

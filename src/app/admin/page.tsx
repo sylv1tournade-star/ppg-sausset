@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { formatDayOfWeekLongCapitalized, formatMonthYear, formatParisShortDate, formatSeasonScheduleTagline, parseMonthKey } from "@/lib/calendar";
+import { AdminSessionAgenda } from "@/components/admin-session-agenda";
+import { formatDayOfWeekLongCapitalized, formatMonthYear, formatParisShortDate, formatSeasonScheduleTagline, parseMonthKey, pickAgendaMonthKey } from "@/lib/calendar";
 import type { Attendance, BureauStats, PaidMember, Season, Session } from "@/lib/types";
 
 type ParticipantRow = {
@@ -380,46 +381,22 @@ export default function AdminPage() {
 
       <section className={isSuperAdmin ? "grid gap-6 lg:grid-cols-2" : ""}>
         <div className="card p-6">
-          <h2 className="text-xl font-bold">Séances</h2>
-          <div className="mt-4 max-h-[70vh] space-y-4 overflow-auto">
-            {sessions.map((session) => (
-              <article key={session.id} className="rounded-xl border border-[var(--border)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold">{formatParisShortDate(session.sessionDate)}</p>
-                  <select
-                    className="input max-w-[10rem]"
-                    value={session.status}
-                    onChange={(e) =>
-                      updateSession(session.id, {
-                        status: e.target.value as Session["status"],
-                      })
-                    }
-                  >
-                    <option value="scheduled">Programmée</option>
-                    <option value="cancelled">Annulée</option>
-                    <option value="rescheduled">Reportée</option>
-                  </select>
-                </div>
-                <input
-                  className="input mt-2"
-                  placeholder="Thème de la séance"
-                  defaultValue={session.theme ?? ""}
-                  onBlur={(e) => updateSession(session.id, { theme: e.target.value })}
-                />
-                <textarea
-                  className="input mt-2 min-h-20"
-                  placeholder="Notes / consignes"
-                  defaultValue={session.notes ?? ""}
-                  onBlur={(e) => updateSession(session.id, { notes: e.target.value })}
-                />
-                {isSuperAdmin ? (
-                  <button type="button" className="btn btn-secondary mt-3" onClick={() => openAttendance(session.id)}>
-                    Feuille de présence
-                  </button>
-                ) : null}
-              </article>
-            ))}
-          </div>
+          <h2 className="text-xl font-bold">Séances — agenda</h2>
+          {!season ? (
+            <p className="muted mt-2 text-sm">Aucune saison active.</p>
+          ) : (
+            <div className="mt-4">
+              <AdminSessionAgenda
+                season={season}
+                sessions={sessions}
+                isSuperAdmin={isSuperAdmin}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={setSelectedSessionId}
+                onUpdateSession={updateSession}
+                onOpenAttendance={isSuperAdmin ? openAttendance : undefined}
+              />
+            </div>
+          )}
         </div>
 
         {isSuperAdmin ? (
