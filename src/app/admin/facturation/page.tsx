@@ -23,8 +23,11 @@ const RECIPIENT_LABELS: Record<BillingRecipientType, string> = {
 function initialStatuses(preview: MonthBillingPreview) {
   const statusMap: Record<string, BillingAccountingStatus> = {};
   const commentMap: Record<string, string> = {};
-  for (const session of preview.sessions) {
-    const saved = preview.lastValidation?.sessionSnapshot.find((item) => item.id === session.id);
+  const snapshots = Array.isArray(preview.lastValidation?.sessionSnapshot)
+    ? preview.lastValidation.sessionSnapshot
+    : [];
+  for (const session of preview.sessions ?? []) {
+    const saved = snapshots.find((item) => item.id === session.id);
     const savedStatus = saved?.accountingStatus as string | undefined;
     statusMap[session.id] =
       savedStatus && savedStatus !== "not_held"
@@ -49,6 +52,7 @@ export default function FacturationPage() {
   const [brevoConfigured, setBrevoConfigured] = useState(false);
   const [monthKeys, setMonthKeys] = useState<string[]>([]);
   const [previewMonthKey, setPreviewMonthKey] = useState<string | null>(null);
+  const [previewLoadingMonthKey, setPreviewLoadingMonthKey] = useState<string | null>(null);
   const [preview, setPreview] = useState<MonthBillingPreview | null>(null);
   const [sessionStatuses, setSessionStatuses] = useState<Record<string, BillingAccountingStatus>>({});
   const [sessionComments, setSessionComments] = useState<Record<string, string>>({});
@@ -234,13 +238,19 @@ export default function FacturationPage() {
   async function openPreview(monthKey: string) {
     const { year, month } = parseMonthKey(monthKey);
     setPreviewMonthKey(monthKey);
+    setPreviewLoadingMonthKey(monthKey);
+    setPreview(null);
     setError(null);
-    setBusy(true);
     try {
-      const response = await fetch(`/api/admin/billing?year=${year}&month=${month + 1}`);
-      const data = await response.json();
+      const response = await fetch(`/api/admin/billing?year=${year}&month=${month + 1}`, {
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.error ?? "Erreur");
+        throw new Error(data.error ?? "Impossible de charger la revue du mois.");
+      }
+      if (!data.preview) {
+        throw new Error("Réponse serveur incomplète.");
       }
       const nextPreview = data.preview as MonthBillingPreview;
       const { statusMap, commentMap } = initialStatuses(nextPreview);
@@ -249,12 +259,22 @@ export default function FacturationPage() {
       setSessionComments(commentMap);
       setBilledCount(nextPreview.lastValidation?.billedSessionCount ?? countBillable(statusMap));
       setBillingNote(nextPreview.lastValidation?.billingNote ?? "");
+      requestAnimationFrame(() => {
+        document.getElementById(`billing-preview-${monthKey}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Erreur");
       setPreview(null);
+      setPreviewMonthKey(null);
     } finally {
-      setBusy(false);
+      setPreviewLoadingMonthKey(null);
     }
+  }
+
+  function closePreview() {
+    setPreview(null);
+    setPreviewMonthKey(null);
+    setPreviewLoadingMonthKey(null);
   }
 
   function updateSessionStatus(sessionId: string, accountingStatus: BillingAccountingStatus) {
@@ -355,13 +375,94 @@ export default function FacturationPage() {
         throw new Error(data.error ?? "Erreur");
       }
       await refresh();
-      setPreviewMonthKey(null);
-      setPreview(null);
+      closePreview();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Erreur");
     } finally {
       setBusy(false);
     }
+  }
+
+  function renderPreviewPanel(monthKey: string) {
+    if (previewMonthKey !== monthKey || !preview) {
+      if (previewLoadingMonthKey === monthKey) {
+        return (
+          <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-6 text-sm">
+            Chargement de la revue du mois…
+          </div>
+        );
+      }
+      return null;
+    }
+
+    return (
+      <div
+        id={`billing-preview-${monthKey}`}
+        className="mt-4 space-y-4 rounded-xl border-2 border-[var(--accent)]/30 bg-white p-4"
+      >
+        <div>
+          <h3 className="text-lg font-bold capitalize">Revue — {preview.monthLabel}</h3>
+          <p className="muted mt-1 text-sm">
+            Vérifiez chaque séance. L&apos;e-mail part uniquement si vous cliquez sur « Valider et envoyer ».
+          </p>
+        </div>
+
+        {!preview.canValidate ? (
+          <p className="rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">
+            Ce mois contient encore des séances à venir. Revenez après le dernier jeudi.
+          </p>
+        ) : null}
+
+        <div className="space-y-3">
+          {preview.sessions.length === 0 ? (
+            <p className="muted text-sm">Aucune séance enregistrée pour ce mois.</p>
+          ) : (
+            preview.sessions.map((session) => renderSessionRow(session))
+          )}
+        </div>
+
+        <p className="text-sm">
+          Calcul automatique : <strong>{countBillable(sessionStatuses)}</strong> séance(s) facturable(s)
+        </p>
+
+        <label className="block space-y-1">
+          <span className="text-sm font-medium">Nombre de séances pour la facturation (correction manuelle)</span>
+          <input
+            className="input max-w-[8rem]"
+            type="number"
+            min={0}
+            value={billedCount}
+            onChange={(event) => setBilledCount(Number(event.target.value))}
+          />
+        </label>
+
+        <label className="block space-y-1">
+          <span className="text-sm font-medium">Note pour les trésoriers (optionnel)</span>
+          <textarea
+            className="input min-h-20"
+            value={billingNote}
+            onChange={(event) => setBillingNote(event.target.value)}
+          />
+        </label>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !preview.canValidate || treasurersCount === 0 || !brevoConfigured}
+            onClick={sendValidation}
+          >
+            {preview.lastValidation?.lastSentAt ? "Valider et renvoyer" : "Valider et envoyer"}
+          </button>
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={downloadBillingPdf}>
+            Télécharger le PDF (aperçu)
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={closePreview}>
+            Fermer
+          </button>
+        </div>
+      </div>
+    );
   }
 
   function renderSessionRow(session: BillingSessionRow) {
@@ -634,101 +735,48 @@ export default function FacturationPage() {
           n&apos;est envoyé tant que vous n&apos;avez pas confirmé <strong className="text-[var(--ink)]">Valider et envoyer</strong>.
         </p>
         <ul className="mt-4 space-y-2">
+          {sortedMonthKeys.length === 0 ? (
+            <li className="muted rounded-xl border border-dashed border-[var(--border)] px-4 py-6 text-sm">
+              Aucune séance dans la saison active — créez d&apos;abord une saison dans l&apos;admin.
+            </li>
+          ) : null}
           {sortedMonthKeys.map((monthKey) => {
             const { year, month } = parseMonthKey(monthKey);
             const label = formatMonthYear(year, month);
             const validation = validationByMonth.get(monthKey);
+            const isLoading = previewLoadingMonthKey === monthKey;
+            const isOpen = previewMonthKey === monthKey && Boolean(preview);
             return (
               <li
                 key={monthKey}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] px-4 py-3"
+                className={`rounded-xl border px-4 py-3 ${isOpen ? "border-[var(--accent)]/40 bg-[var(--accent-soft)]/20" : "border-[var(--border)]"}`}
               >
-                <div>
-                  <p className="font-medium capitalize">{label}</p>
-                  {validation?.lastSentAt ? (
-                    <p className="muted text-sm">
-                      Validé · envoyé {validation.sendCount} fois · {validation.billedSessionCount} séance(s) facturée(s)
-                    </p>
-                  ) : (
-                    <p className="muted text-sm">Pas encore validé</p>
-                  )}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium capitalize">{label}</p>
+                    {validation?.lastSentAt ? (
+                      <p className="muted text-sm">
+                        Validé · envoyé {validation.sendCount} fois · {validation.billedSessionCount} séance(s) facturée(s)
+                      </p>
+                    ) : (
+                      <p className="muted text-sm">Pas encore validé</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={Boolean(previewLoadingMonthKey) || busy}
+                    onClick={() => void openPreview(monthKey)}
+                  >
+                    {isLoading ? "Chargement…" : validation?.lastSentAt ? "Revérifier" : "Vérifier"}
+                  </button>
                 </div>
-                <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openPreview(monthKey)}>
-                  {validation?.lastSentAt ? "Revérifier" : "Vérifier"}
-                </button>
+                {renderPreviewPanel(monthKey)}
               </li>
             );
           })}
         </ul>
       </section>
-
-      {preview && previewMonthKey ? (
-        <section className="card p-6">
-          <h2 className="text-xl font-bold capitalize">Revue — {preview.monthLabel}</h2>
-          <p className="muted mt-2 text-sm">
-            Vérifiez chaque séance ci-dessous. L&apos;e-mail part uniquement si vous cliquez sur « Valider et envoyer »
-            et confirmez.
-          </p>
-
-          {!preview.canValidate ? (
-            <p className="mt-4 rounded-lg border border-[var(--warn)] bg-[#fff3cd] px-3 py-2 text-sm text-[#856404]">
-              Ce mois contient encore des séances à venir. Revenez après le dernier jeudi.
-            </p>
-          ) : null}
-
-          <div className="mt-4 space-y-3">
-            {preview.sessions.map((session) => renderSessionRow(session))}
-          </div>
-
-          <p className="mt-4 text-sm">
-            Calcul automatique : <strong>{countBillable(sessionStatuses)}</strong> séance(s) facturable(s)
-          </p>
-
-          <label className="mt-4 block space-y-1">
-            <span className="text-sm font-medium">Nombre de séances pour la facturation (correction manuelle)</span>
-            <input
-              className="input max-w-[8rem]"
-              type="number"
-              min={0}
-              value={billedCount}
-              onChange={(event) => setBilledCount(Number(event.target.value))}
-            />
-          </label>
-
-          <label className="mt-4 block space-y-1">
-            <span className="text-sm font-medium">Note pour les trésoriers (optionnel)</span>
-            <textarea
-              className="input min-h-20"
-              value={billingNote}
-              onChange={(event) => setBillingNote(event.target.value)}
-            />
-          </label>
-
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !preview.canValidate || treasurersCount === 0 || !brevoConfigured}
-              onClick={sendValidation}
-            >
-              {preview.lastValidation?.lastSentAt ? "Valider et renvoyer" : "Valider et envoyer"}
-            </button>
-            <button type="button" className="btn btn-secondary" disabled={busy} onClick={downloadBillingPdf}>
-              Télécharger le PDF (aperçu)
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                setPreview(null);
-                setPreviewMonthKey(null);
-              }}
-            >
-              Fermer
-            </button>
-          </div>
-        </section>
-      ) : null}
 
       {validations.length > 0 ? (
         <details className="card p-6 group">
