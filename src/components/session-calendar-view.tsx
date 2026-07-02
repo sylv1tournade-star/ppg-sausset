@@ -7,6 +7,7 @@ import {
   formatParisShortDate,
   getMonthGrid,
   getWeekdayLabels,
+  getCurrentAgendaMonthKey,
   isSessionPast,
   isSessionRegisterable,
   parseMonthKey,
@@ -78,6 +79,18 @@ export function SessionCalendarView({
   const selected = sessions.find((session) => session.id === selectedId) ?? null;
   const sessionDayLabel = formatDayOfWeekLongCapitalized(season.dayOfWeek);
 
+  function goToCurrentMonth() {
+    const current = getCurrentAgendaMonthKey(sessions.map((session) => session.sessionDate));
+    if (current < monthBounds.min || current > monthBounds.max) {
+      return;
+    }
+    setMonthKey(current);
+    const defaultId = pickDefaultSession(sessions, current);
+    if (defaultId) {
+      setSelectedId(defaultId);
+    }
+  }
+
   function goMonth(delta: number) {
     const next = shiftMonthKey(monthKey, delta);
     if (next < monthBounds.min || next > monthBounds.max) {
@@ -116,7 +129,12 @@ export function SessionCalendarView({
           >
             ←
           </button>
-          <h2 className="text-center text-lg font-bold capitalize">{formatMonthYear(year, month)}</h2>
+          <div className="min-w-0 flex-1 text-center">
+            <h2 className="text-lg font-bold capitalize">{formatMonthYear(year, month)}</h2>
+            <button type="button" className="muted mt-1 text-xs underline" onClick={goToCurrentMonth}>
+              Aujourd&apos;hui
+            </button>
+          </div>
           <button
             type="button"
             className="btn btn-secondary px-3"
@@ -145,6 +163,7 @@ export function SessionCalendarView({
                   }
                 >
                   {formatParisShortDate(session.sessionDate)}
+                  {isLoggedIn && session.isRegistered ? " · inscrit" : ""}
                   {session.status === "cancelled" ? " · annulée" : ""}
                   {session.status === "rescheduled" ? " · reportée" : ""}
                   {past && session.status !== "cancelled" && session.status !== "rescheduled" ? " · passée" : ""}
@@ -206,6 +225,9 @@ export function SessionCalendarView({
                 ].join(" ")}
               >
                 <span>{cell.day}</span>
+                {isLoggedIn && session.isRegistered && !isSelected ? (
+                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wide">✓</span>
+                ) : null}
                 {session.registrationCount > 0 ? (
                   <span className={`mt-0.5 text-[10px] font-bold ${isSelected ? "text-white/90" : ""}`}>
                     {session.registrationCount}

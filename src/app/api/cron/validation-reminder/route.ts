@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { maybeSendMonthValidationReminder } from "@/lib/server-data";
+import { runDailyCronTasks } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await maybeSendMonthValidationReminder();
+    const result = await runDailyCronTasks();
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erreur";

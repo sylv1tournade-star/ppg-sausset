@@ -7,6 +7,7 @@ import {
   formatParisShortDate,
   getMonthGrid,
   getWeekdayLabels,
+  getCurrentAgendaMonthKey,
   isSessionPast,
   parseMonthKey,
   pickAgendaMonthKey,
@@ -15,12 +16,18 @@ import {
 } from "@/lib/calendar";
 import type { Season, Session } from "@/lib/types";
 
+type AdminSession = Session & { registrationCount?: number };
+
+export type AgendaFilter = "all" | "upcoming" | "past" | "cancelled" | "with-registrations";
+
 type Props = {
   season: Season;
-  sessions: Session[];
+  sessions: AdminSession[];
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onUpdateSession: (sessionId: string, patch: Partial<Session>) => void;
+  compact?: boolean;
+  showFilters?: boolean;
 };
 
 function SessionEditPanel({
@@ -94,9 +101,12 @@ export function AdminSessionAgenda({
   selectedSessionId,
   onSelectSession,
   onUpdateSession,
+  compact = false,
+  showFilters = false,
 }: Props) {
   const sessionDates = useMemo(() => sessions.map((session) => session.sessionDate), [sessions]);
   const [monthKey, setMonthKey] = useState(() => pickAgendaMonthKey(sessionDates));
+  const [agendaFilter, setAgendaFilter] = useState<AgendaFilter>("all");
 
   useEffect(() => {
     setMonthKey(pickAgendaMonthKey(sessionDates));
@@ -111,7 +121,7 @@ export function AdminSessionAgenda({
   }, [sessionDates, monthKey]);
 
   const sessionsByDate = useMemo(() => {
-    const map = new Map<string, Session>();
+    const map = new Map<string, AdminSession>();
     for (const session of sessions) {
       map.set(session.sessionDate, session);
     }
@@ -120,7 +130,26 @@ export function AdminSessionAgenda({
 
   const { year, month } = parseMonthKey(monthKey);
   const grid = getMonthGrid(year, month);
-  const sessionsInMonth = sessions.filter((session) => session.sessionDate.startsWith(monthKey));
+
+  function matchesFilter(session: AdminSession) {
+    const past = isSessionPast(session.sessionDate, season.endTime);
+    switch (agendaFilter) {
+      case "upcoming":
+        return !past && session.status === "scheduled";
+      case "past":
+        return past;
+      case "cancelled":
+        return session.status === "cancelled" || session.status === "rescheduled";
+      case "with-registrations":
+        return (session.registrationCount ?? 0) > 0;
+      default:
+        return true;
+    }
+  }
+
+  const sessionsInMonth = sessions.filter(
+    (session) => session.sessionDate.startsWith(monthKey) && matchesFilter(session),
+  );
   const selected =
     sessions.find((session) => session.id === selectedSessionId) ??
     sessions.find((session) => session.id === pickDefaultSessionIdInMonth(sessions, monthKey)) ??
@@ -135,6 +164,18 @@ export function AdminSessionAgenda({
       onSelectSession(defaultId);
     }
   }, [monthKey, onSelectSession, selectedSessionId, sessions]);
+
+  function goToCurrentMonth() {
+    const current = getCurrentAgendaMonthKey(sessionDates);
+    if (current < monthBounds.min || current > monthBounds.max) {
+      return;
+    }
+    setMonthKey(current);
+    const defaultId = pickDefaultSessionIdInMonth(sessions, current);
+    if (defaultId) {
+      onSelectSession(defaultId);
+    }
+  }
 
   function goMonth(delta: number) {
     const next = shiftMonthKey(monthKey, delta);
@@ -161,6 +202,28 @@ export function AdminSessionAgenda({
 
   return (
     <div className="space-y-5">
+      {showFilters ? (
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              ["all", "Toutes"],
+              ["upcoming", "À venir"],
+              ["past", "Passées"],
+              ["cancelled", "Annulées / reportées"],
+              ["with-registrations", "Avec inscrits"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={agendaFilter === value ? "btn btn-primary text-xs" : "btn btn-secondary text-xs"}
+              onClick={() => setAgendaFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="max-w-md">
         <div className="flex items-center justify-between gap-2">
           <button
@@ -183,6 +246,11 @@ export function AdminSessionAgenda({
             →
           </button>
         </div>
+        <div className="mt-2 text-center">
+          <button type="button" className="muted text-xs underline" onClick={goToCurrentMonth}>
+            Aujourd&apos;hui
+          </button>
+        </div>
 
         {sessionsInMonth.length > 0 ? (
           <div className="mt-3 flex flex-wrap gap-2">
@@ -200,6 +268,7 @@ export function AdminSessionAgenda({
                   }
                 >
                   {formatParisShortDate(session.sessionDate)}
+                  {(session.registrationCount ?? 0) > 0 ? ` (${session.registrationCount})` : ""}
                   {session.status === "cancelled" ? " · annulée" : ""}
                   {session.status === "rescheduled" ? " · reportée" : ""}
                 </button>
@@ -229,7 +298,7 @@ export function AdminSessionAgenda({
             const isSelected = session?.id === selected?.id;
             const past = session ? isSessionPast(session.sessionDate, season.endTime) : false;
 
-            if (!session || !isSessionDay) {
+            if (!session || !isSessionDay || !matchesFilter(session)) {
               return (
                 <div
                   key={cell.date}
@@ -262,7 +331,11 @@ export function AdminSessionAgenda({
                 title={session.theme ?? session.notes ?? undefined}
               >
                 <span>{cell.day}</span>
-                {session.theme?.trim() || session.notes?.trim() ? (
+                {(session.registrationCount ?? 0) > 0 ? (
+                  <span className={`mt-0.5 text-[10px] font-bold ${isSelected ? "text-white/90" : ""}`}>
+                    {session.registrationCount}
+                  </span>
+                ) : session.theme?.trim() || session.notes?.trim() ? (
                   <span className={`mt-0.5 text-[9px] ${isSelected ? "text-white/90" : ""}`}>●</span>
                 ) : null}
               </button>
@@ -271,17 +344,19 @@ export function AdminSessionAgenda({
         </div>
 
         <p className="muted mt-3 text-xs">
-          Mois en cours par défaut. Touchez un {dayLabel.toLowerCase()} coloré pour le modifier.
+          {compact
+            ? "Choisissez le jeudi concerné. Le chiffre indique le nombre d'inscrits en ligne."
+            : `Mois en cours par défaut. Touchez un ${dayLabel.toLowerCase()} coloré pour le modifier.`}
         </p>
       </div>
 
-      {selected ? (
+      {!compact && selected ? (
         <SessionEditPanel session={selected} onUpdateSession={onUpdateSession} />
-      ) : (
+      ) : !compact ? (
         <p className="muted rounded-xl border border-dashed border-[var(--border)] p-4 text-sm">
           Sélectionnez une séance dans le calendrier.
         </p>
-      )}
+      ) : null}
     </div>
   );
 }

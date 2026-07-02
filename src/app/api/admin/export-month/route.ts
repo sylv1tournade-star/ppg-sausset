@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { isSuperAdminAuthenticated } from "@/lib/auth";
+import { buildMonthPresenceCsv, buildMonthRegistrationsCsv } from "@/lib/month-export-csv";
 import { buildMonthRegistrationsPdf } from "@/lib/month-export-pdf";
-import { getMonthRegistrationsReport } from "@/lib/server-data";
+import { getMonthPresenceExport, getMonthRegistrationsReport } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -18,15 +19,50 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const year = Number(searchParams.get("year"));
   const month = Number(searchParams.get("month"));
+  const format = searchParams.get("format") ?? "pdf";
 
   if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
     return NextResponse.json({ error: "Année ou mois invalide." }, { status: 400 });
   }
 
   try {
+    const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+
+    if (format === "csv") {
+      const report = await getMonthRegistrationsReport(year, month - 1);
+      const csv = buildMonthRegistrationsCsv({
+        monthLabel: report.monthLabel,
+        sessions: report.sessions.map((session) => ({
+          sessionDate: session.sessionDate,
+          theme: session.theme,
+          status: session.status,
+          participants: session.participants ?? [],
+        })),
+      });
+      return new Response(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="ppg-inscriptions-${monthKey}.csv"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    if (format === "csv-presence") {
+      const exportData = await getMonthPresenceExport(year, month - 1);
+      const csv = buildMonthPresenceCsv(exportData);
+      return new Response(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="ppg-presences-${monthKey}.csv"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
     const report = await getMonthRegistrationsReport(year, month - 1);
     const pdfBytes = await buildMonthRegistrationsPdf(report);
-    const filename = `ppg-inscriptions-${year}-${String(month).padStart(2, "0")}.pdf`;
+    const filename = `ppg-inscriptions-${monthKey}.pdf`;
 
     return new Response(Buffer.from(pdfBytes), {
       headers: {

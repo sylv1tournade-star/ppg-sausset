@@ -265,16 +265,68 @@ export default function FacturationPage() {
     });
   }
 
+  async function downloadBillingPdf() {
+    if (!previewMonthKey || !preview) {
+      return;
+    }
+    const { year, month } = parseMonthKey(previewMonthKey);
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/billing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "preview.pdf",
+          year,
+          month: month + 1,
+          billedSessionCount: billedCount,
+          billingNote,
+          sessionStatuses: Object.entries(sessionStatuses).map(([sessionId, accountingStatus]) => ({
+            sessionId,
+            accountingStatus,
+            comment: sessionComments[sessionId] ?? "",
+          })),
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error ?? "Erreur lors de la génération du PDF");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `ppg-facturation-${previewMonthKey}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : "Erreur");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendValidation() {
     if (!previewMonthKey || !preview) {
       return;
     }
     const { year, month } = parseMonthKey(previewMonthKey);
     const validation = validationByMonth.get(previewMonthKey);
-    const confirmText = validation?.lastSentAt
-      ? "Renvoyer l'e-mail aux trésoriers (Manon et Suzanne en copie) ?"
-      : "Valider ce mois comptablement et envoyer l'e-mail ?";
-    if (!window.confirm(confirmText)) {
+    const monthLabel = preview.monthLabel;
+    const treasurerEmails = recipientsByType.treasurer.map((r) => r.email).join(", ");
+    const billableCount = countBillable(sessionStatuses);
+    const confirmLines = [
+      validation?.lastSentAt
+        ? `Renvoyer la validation de ${monthLabel} aux trésoriers ?`
+        : `Valider ${monthLabel} et envoyer l'e-mail aux trésoriers ?`,
+      "",
+      `${billedCount} séance(s) facturée(s) (${billableCount} marquée(s) « réalisée »).`,
+      treasurerEmails ? `Destinataire principal : ${treasurerEmails}.` : "Aucun trésorier configuré.",
+      "Manon et Suzanne recevront une copie.",
+      validation?.lastSentAt ? `Déjà envoyé ${validation.sendCount} fois.` : "",
+    ].filter(Boolean);
+    if (!window.confirm(confirmLines.join("\n"))) {
       return;
     }
 
@@ -661,6 +713,9 @@ export default function FacturationPage() {
             >
               {preview.lastValidation?.lastSentAt ? "Valider et renvoyer" : "Valider et envoyer"}
             </button>
+            <button type="button" className="btn btn-secondary" disabled={busy} onClick={downloadBillingPdf}>
+              Télécharger le PDF (aperçu)
+            </button>
             <button
               type="button"
               className="btn btn-secondary"
@@ -673,6 +728,45 @@ export default function FacturationPage() {
             </button>
           </div>
         </section>
+      ) : null}
+
+      {validations.length > 0 ? (
+        <details className="card p-6 group">
+          <summary className="cursor-pointer list-none text-xl font-bold marker:content-none [&::-webkit-details-marker]:hidden">
+            <span className="flex flex-wrap items-center justify-between gap-2">
+              <span>Historique des validations</span>
+              <span className="text-sm font-normal text-[var(--accent)] group-open:hidden">
+                Afficher ({validations.length})
+              </span>
+            </span>
+          </summary>
+          <ul className="mt-4 space-y-2">
+            {[...validations]
+              .sort((a, b) => b.year - a.year || b.month - a.month)
+              .map((validation) => {
+                const monthKey = `${validation.year}-${String(validation.month).padStart(2, "0")}`;
+                const { year, month } = parseMonthKey(monthKey);
+                const label = formatMonthYear(year, month);
+                return (
+                  <li
+                    key={validation.id}
+                    className="rounded-xl border border-[var(--border)] px-4 py-3 text-sm"
+                  >
+                    <p className="font-medium capitalize">{label}</p>
+                    <p className="muted mt-1">
+                      {validation.billedSessionCount} séance(s) facturée(s) · envoyé {validation.sendCount} fois
+                      {validation.lastSentAt
+                        ? ` · dernier envoi ${new Date(validation.lastSentAt).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })}`
+                        : ""}
+                    </p>
+                    {validation.billingNote?.trim() ? (
+                      <p className="muted mt-1 italic">« {validation.billingNote.trim()} »</p>
+                    ) : null}
+                  </li>
+                );
+              })}
+          </ul>
+        </details>
       ) : null}
     </div>
   );

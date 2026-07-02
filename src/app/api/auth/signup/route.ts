@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { generateAccessToken, setParticipantCookie } from "@/lib/auth";
-import { CLUB_MEMBERSHIP_URL } from "@/lib/constants";
+import { CLUB_MEMBERSHIP_URL, PPG_LICENSE_MESSAGE } from "@/lib/constants";
 import { normalizeEmail } from "@/lib/helpers";
 import { createParticipant, getParticipantByEmail, isPaidMemberForActiveSeason } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   if (!membership.allowed) {
     return NextResponse.json(
       {
-        error: "Adhésion non trouvée. Il faut être membre du club pour accéder au PPG.",
+        error: PPG_LICENSE_MESSAGE,
         code: "NOT_PAID_MEMBER",
         membershipUrl: CLUB_MEMBERSHIP_URL,
       },

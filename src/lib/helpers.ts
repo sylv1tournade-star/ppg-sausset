@@ -28,6 +28,7 @@ type ParticipantRow = {
   last_name: string;
   email: string;
   access_token: string;
+  email_reminders_enabled?: boolean;
   created_at: string;
 };
 
@@ -64,6 +65,7 @@ export function mapParticipant(row: ParticipantRow): Participant {
     lastName: row.last_name,
     email: row.email,
     accessToken: row.access_token,
+    emailRemindersEnabled: row.email_reminders_enabled !== false,
     createdAt: row.created_at,
   };
 }

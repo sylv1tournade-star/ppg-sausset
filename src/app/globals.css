@@ -259,3 +259,49 @@ textarea {
     display: none;
   }
 }
+
+.presence-contrast-panel {
+  background: #0f1a12;
+  color: #f4faf5;
+  border-color: #2d4a36;
+}
+
+.presence-contrast-panel .muted {
+  color: #b8c9bb;
+}
+
+.presence-contrast-panel .input {
+  background: #162218;
+  border-color: #3d5c45;
+  color: #f4faf5;
+}
+
+.presence-contrast-panel li.rounded-xl {
+  background: #162218 !important;
+  border-color: #3d5c45;
+}
+
+.presence-contrast-panel .btn-secondary {
+  background: #1b2e20;
+  border-color: #4a6b52;
+  color: #f4faf5;
+}
+
+.presence-contrast-panel .btn-primary {
+  background: #52b788;
+  color: #0f1a12;
+}
+
+.presence-contrast-panel .rounded-xl.bg-\[var\(--accent-soft\)\] {
+  background: #1b4332 !important;
+}
+
+.admin-manon-mobile .card h2 {
+  font-size: 1.125rem;
+}
+
+@media (max-width: 640px) {
+  .admin-manon-mobile .container {
+    width: min(1100px, calc(100% - 1rem));
+  }
+}

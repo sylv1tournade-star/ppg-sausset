@@ -10,6 +10,10 @@ export function isBrevoConfigured() {
   return Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
 }
 
+function unsubscribeLink(accessToken: string) {
+  return `${getAppUrl().replace(/\/$/, "")}/desabonnement/${accessToken}`;
+}
+
 export async function sendBillingValidationEmail(input: {
   to: string[];
   cc?: string[];
@@ -31,31 +35,27 @@ export async function sendBillingValidationEmail(input: {
   const correctionLine =
     input.billedSessionCount !== input.computedSessionCount
       ? emailParagraph(
-          `<strong>Correction facturation :</strong> ${input.billedSessionCount} séance(s) facturée(s) (calcul automatique : ${input.computedSessionCount}).`,
+          `Correction : ${emailStrong(String(input.billedSessionCount))} séance(s) facturée(s) (calcul auto : ${input.computedSessionCount}).`,
         )
-      : emailParagraph(`<strong>Nombre de séances facturées :</strong> ${input.billedSessionCount}.`);
+      : emailParagraph(`${emailStrong(String(input.billedSessionCount))} séance(s) facturée(s).`);
 
   const noteLine = input.billingNote?.trim()
-    ? emailParagraph(`<strong>Note :</strong> ${escapeHtml(input.billingNote.trim())}`)
+    ? emailParagraph(`Note : ${escapeHtml(input.billingNote.trim())}`)
     : "";
 
-  const resendLine = input.isResend
-    ? emailParagraph("<em>Ceci est un nouvel envoi (correction ou mise à jour).</em>")
-    : "";
+  const resendLine = input.isResend ? emailParagraph("<em>Nouvel envoi (mise à jour).</em>") : "";
 
   const htmlContent = buildBrandedEmailHtml({
-    preheader: `Validation des cours PPG — ${input.monthLabel}`,
+    preheader: `Cours validés — ${input.monthLabel}`,
     title: `Cours validés — ${input.monthLabel}`,
-    badge: { text: "Validation mensuelle", tone: "accent" },
+    badge: { text: "Facturation", tone: "accent" },
     bodyHtml: [
       emailParagraph("Bonjour,"),
-      emailParagraph(
-        `Suzanne a validé les cours PPG de ${emailStrong(input.monthLabel)}.`,
-      ),
+      emailParagraph(`Suzanne a validé les cours PPG de ${emailStrong(input.monthLabel)}.`),
       correctionLine,
       noteLine,
       resendLine,
-      emailParagraph("Le détail des séances réalisées et des présences est en pièce jointe (PDF)."),
+      emailParagraph("Le détail est en pièce jointe (PDF)."),
     ].join(""),
     signature: "PPG Courir à Sausset",
   });
@@ -90,18 +90,14 @@ export async function sendValidationReminderEmail(input: {
 
   const htmlContent = buildBrandedEmailHtml({
     preheader: `À valider : ${input.monthLabel}`,
-    title: "Validation mensuelle à faire",
+    title: "Validation mensuelle",
     badge: { text: "Rappel", tone: "warn" },
     bodyHtml: [
       emailParagraph("Bonjour Suzanne,"),
-      emailParagraph(
-        `La dernière séance PPG de ${emailStrong(input.monthLabel)} est terminée.`,
-      ),
-      emailParagraph(
-        "Vous pouvez maintenant valider le mois comptablement et envoyer le récapitulatif aux trésoriers.",
-      ),
+      emailParagraph(`La dernière séance PPG de ${emailStrong(input.monthLabel)} est terminée.`),
+      emailParagraph("Vous pouvez valider le mois et envoyer le récapitulatif aux trésoriers."),
     ].join(""),
-    cta: { label: "Ouvrir la facturation PPG", href: facturationUrl },
+    cta: { label: "Ouvrir la facturation", href: facturationUrl },
     signature: "PPG Courir à Sausset",
   });
 
@@ -121,6 +117,7 @@ export async function sendSessionNotMaintainedEmail(input: {
   status: "cancelled" | "rescheduled";
   theme: string | null;
   notes: string | null;
+  accessToken?: string;
 }) {
   if (!isBrevoConfigured()) {
     throw new Error("BREVO_NOT_CONFIGURED");
@@ -131,33 +128,28 @@ export async function sendSessionNotMaintainedEmail(input: {
   const statusLabel = input.status === "cancelled" ? "annulée" : "reportée";
   const appUrl = getAppUrl().replace(/\/$/, "");
 
-  const themeLine = input.theme?.trim()
-    ? emailParagraph(`<strong>Thème prévu :</strong> ${escapeHtml(input.theme.trim())}`)
-    : "";
-
-  const notesLine = input.notes?.trim()
-    ? emailParagraph(`<strong>Précisions :</strong> ${escapeHtml(input.notes.trim())}`)
-    : "";
+  const themeLine = input.theme?.trim() ? emailParagraph(`Thème : ${escapeHtml(input.theme.trim())}`) : "";
+  const notesLine = input.notes?.trim() ? emailParagraph(`Précisions : ${escapeHtml(input.notes.trim())}`) : "";
 
   const htmlContent = buildBrandedEmailHtml({
     preheader: `Séance ${statusLabel} — ${input.sessionDateLabel}`,
     title: `Séance ${statusLabel}`,
     badge: {
-      text: input.status === "cancelled" ? "Séance annulée" : "Séance reportée",
+      text: input.status === "cancelled" ? "Annulée" : "Reportée",
       tone: input.status === "cancelled" ? "danger" : "warn",
     },
     bodyHtml: [
       emailParagraph(`Bonjour ${escapeHtml(input.firstName)},`),
-      emailParagraph(
-        `La séance PPG du ${emailStrong(input.sessionDateLabel)} est ${emailStrong(statusLabel)}.`,
-      ),
+      emailParagraph(`La séance PPG du ${emailStrong(input.sessionDateLabel)} est ${emailStrong(statusLabel)}.`),
       themeLine,
       notesLine,
       emailParagraph("Vous n'avez pas besoin de vous déplacer pour cette date."),
-      emailParagraph("Consultez le calendrier PPG pour les prochaines séances."),
     ].join(""),
-    cta: { label: "Voir le calendrier PPG", href: appUrl },
-    signature: "PPG Courir à Sausset · Manon",
+    cta: { label: "Voir le calendrier", href: appUrl },
+    footerLinks: input.accessToken
+      ? [{ label: "Gérer mes e-mails", href: unsubscribeLink(input.accessToken) }]
+      : undefined,
+    signature: "Manon — PPG Courir à Sausset",
   });
 
   await postBrevoEmail({
@@ -165,6 +157,55 @@ export async function sendSessionNotMaintainedEmail(input: {
     to: [{ email: input.to }],
     cc: input.cc.map((email) => ({ email })),
     subject: `PPG Sausset — Séance ${statusLabel} — ${input.sessionDateLabel}`,
+    htmlContent,
+  });
+}
+
+export async function sendSessionReminderEmail(input: {
+  to: string;
+  firstName: string;
+  sessionDateLabel: string;
+  timeLabel: string;
+  location: string;
+  theme: string | null;
+  accessToken: string;
+  sessionId: string;
+}) {
+  if (!isBrevoConfigured()) {
+    throw new Error("BREVO_NOT_CONFIGURED");
+  }
+
+  const senderName = process.env.BREVO_SENDER_NAME ?? "PPG Courir à Sausset";
+  const senderEmail = process.env.BREVO_SENDER_EMAIL!;
+  const appUrl = getAppUrl().replace(/\/$/, "");
+  const sessionUrl = `${appUrl}/seance/${input.sessionId}`;
+
+  const themeLine = input.theme?.trim() ? emailParagraph(`Thème : ${escapeHtml(input.theme.trim())}`) : "";
+
+  const htmlContent = buildBrandedEmailHtml({
+    preheader: `Rappel — séance demain ${input.timeLabel}`,
+    title: "Rappel — séance demain",
+    badge: { text: "Demain", tone: "accent" },
+    bodyHtml: [
+      emailParagraph(`Bonjour ${escapeHtml(input.firstName)},`),
+      emailParagraph(
+        `Vous êtes inscrit(e) à la séance PPG de ${emailStrong(input.sessionDateLabel)} (${emailStrong(input.timeLabel)}, ${escapeHtml(input.location)}).`,
+      ),
+      themeLine,
+      emailParagraph("À demain sur le terrain !"),
+    ].join(""),
+    cta: { label: "Voir la séance", href: sessionUrl },
+    footerLinks: [
+      { label: "Ne plus recevoir les rappels", href: unsubscribeLink(input.accessToken) },
+      { label: "Calendrier PPG", href: appUrl },
+    ],
+    signature: "PPG Courir à Sausset",
+  });
+
+  await postBrevoEmail({
+    sender: { name: senderName, email: senderEmail },
+    to: [{ email: input.to }],
+    subject: `PPG Sausset — Rappel séance demain (${input.sessionDateLabel})`,
     htmlContent,
   });
 }

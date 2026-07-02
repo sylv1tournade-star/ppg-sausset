@@ -30,6 +30,7 @@ export type Participant = {
   lastName: string;
   email: string;
   accessToken: string;
+  emailRemindersEnabled?: boolean;
   createdAt: string;
 };
 

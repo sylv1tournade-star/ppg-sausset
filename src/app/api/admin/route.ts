@@ -10,10 +10,13 @@ import {
 import {
   clearPaidMembers,
   createSeason,
+  enrichSessions,
   getActiveSeason,
   getAddableParticipantsForSession,
+  getAdminUpcomingSession,
   getAttendanceForSession,
   getBureauStats,
+  getLatestMonthValidation,
   getSessionById,
   getSessionParticipants,
   getSessionsForSeason,
@@ -24,6 +27,7 @@ import {
   markAttendance,
   notifySessionNotMaintained,
   registerAndMarkAttendance,
+  searchParticipants,
   updateSession,
 } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
@@ -92,6 +96,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ season, members, count: members.length });
   }
 
+  if (action === "search") {
+    const deniedSuper = await requireSuperAdmin();
+    if (deniedSuper) {
+      return deniedSuper;
+    }
+    const query = searchParams.get("q") ?? "";
+    const results = query.trim().length >= 2 ? await searchParticipants(query.trim()) : [];
+    return NextResponse.json({ results });
+  }
+
   const season = await getActiveSeason();
   if (!season) {
     return NextResponse.json({ season: null, sessions: [] });
@@ -99,20 +113,34 @@ export async function GET(request: Request) {
 
   const sessionId = searchParams.get("sessionId");
   if (sessionId) {
-    const deniedSuper = await requireSuperAdmin();
-    if (deniedSuper) {
-      return deniedSuper;
+    const role = await getAdminRole();
+    const participants = await getSessionParticipants(sessionId);
+    if (role !== "super_admin") {
+      return NextResponse.json({ participants, readOnly: true });
     }
-    const [participants, attendance, addable] = await Promise.all([
-      getSessionParticipants(sessionId),
+    const [attendance, addable] = await Promise.all([
       getAttendanceForSession(sessionId),
       getAddableParticipantsForSession(sessionId),
     ]);
     return NextResponse.json({ participants, attendance, addable });
   }
 
-  const sessions = await getSessionsForSeason(season.id);
-  return NextResponse.json({ season, sessions });
+  const sessionsRaw = await getSessionsForSeason(season.id);
+  const sessionsEnriched = await enrichSessions(sessionsRaw, season);
+  const sessions = sessionsEnriched.map((session) => ({
+    id: session.id,
+    seasonId: session.seasonId,
+    sessionDate: session.sessionDate,
+    status: session.status,
+    theme: session.theme,
+    notes: session.notes,
+    createdAt: session.createdAt,
+    registrationCount: session.registrationCount,
+  }));
+  const upcomingSession = await getAdminUpcomingSession(season, sessionsRaw);
+  const latestValidation =
+    (await getAdminRole()) === "super_admin" ? await getLatestMonthValidation(season.id) : null;
+  return NextResponse.json({ season, sessions, upcomingSession, latestValidation });
 }
 
 export async function POST(request: Request) {

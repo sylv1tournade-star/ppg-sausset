@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getPersonalLink, getParticipantToken } from "@/lib/auth";
-import { findNextOpenSession, formatParisShortDate } from "@/lib/calendar";
+import { findNextOpenSession, findNextOpenSessionNotRegistered, formatParisShortDate } from "@/lib/calendar";
 import { getParticipantAssiduity, getParticipantByToken, getParticipantSessions, getSessionsForSeason, enrichSessions } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 import { LogoutButton } from "@/components/logout-button";
@@ -54,7 +54,9 @@ export default async function MoiPage() {
   const personalLink = getPersonalLink(participant.accessToken);
   const allSessions =
     season ? await enrichSessions(await getSessionsForSeason(season.id), season, participant.id) : [];
+  const nextToRegister = season ? findNextOpenSessionNotRegistered(allSessions, season) : null;
   const nextSession = season ? findNextOpenSession(allSessions, season) : null;
+  const bannerSession = nextToRegister ?? nextSession;
 
   return (
     <div className="container max-w-3xl space-y-6">
@@ -74,15 +76,19 @@ export default async function MoiPage() {
         </div>
       </section>
 
-      {nextSession ? (
+      {bannerSession ? (
         <section className="card p-6">
-          <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent)]">Prochaine séance</p>
-          <p className="mt-1 text-lg font-bold">{formatParisShortDate(nextSession.sessionDate)} · 19h</p>
+          <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent)]">
+            {nextToRegister ? "Prochaine séance — inscription ouverte" : "Prochaine séance"}
+          </p>
+          <p className="mt-1 text-lg font-bold">{formatParisShortDate(bannerSession.sessionDate)}</p>
           <p className="muted mt-1 text-sm">
-            {nextSession.isRegistered ? "Vous êtes inscrit(e)." : "Pas encore inscrit(e) pour ce jeudi."}
+            {nextToRegister
+              ? "Vous n'êtes pas encore inscrit(e) à cette date."
+              : "Vous êtes inscrit(e) à la prochaine séance ouverte."}
           </p>
           <Link href="/" className="btn btn-secondary mt-4">
-            {nextSession.isRegistered ? "Voir sur le calendrier" : "S'inscrire maintenant"}
+            {nextToRegister ? "S'inscrire à cette séance" : "Voir sur le calendrier"}
           </Link>
         </section>
       ) : null}

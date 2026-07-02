@@ -83,6 +83,7 @@ export function SessionDetail({ session, season, isLoggedIn, onSessionsUpdate }:
       </p>
 
       <div className="mt-2 flex flex-wrap gap-2">
+        {registered && !past && !cancelled ? <span className="badge badge-ok">Inscrit</span> : null}
         {cancelled ? <span className="badge badge-danger">Annulée</span> : null}
         {rescheduled ? <span className="badge badge-warn">Reportée</span> : null}
         {!cancelled && !rescheduled && past ? <span className="badge badge-warn">Passée</span> : null}
@@ -133,6 +134,9 @@ export function SessionDetail({ session, season, isLoggedIn, onSessionsUpdate }:
             </a>
           </>
         ) : null}
+        <a className="btn btn-secondary" href={`/seance/${session.id}`}>
+          Lien séance
+        </a>
       </div>
       {message ? <p className="mt-3 text-sm text-[var(--danger)]">{message}</p> : null}
     </article>

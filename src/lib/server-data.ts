@@ -221,7 +221,9 @@ export async function getSessionRegisteredWithEmail(sessionId: string) {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("ppg_registrations")
-    .select("participant_id, ppg_participants(id, first_name, last_name, email)")
+    .select(
+      "participant_id, ppg_participants(id, first_name, last_name, email, access_token, email_reminders_enabled)",
+    )
     .eq("session_id", sessionId);
   if (error) {
     throw error;
@@ -230,8 +232,22 @@ export async function getSessionRegisteredWithEmail(sessionId: string) {
   return (data ?? [])
     .map((row) => {
       const participant = row.ppg_participants as
-        | { id: string; first_name: string; last_name: string; email: string }
-        | { id: string; first_name: string; last_name: string; email: string }[]
+        | {
+            id: string;
+            first_name: string;
+            last_name: string;
+            email: string;
+            access_token: string;
+            email_reminders_enabled: boolean | null;
+          }
+        | {
+            id: string;
+            first_name: string;
+            last_name: string;
+            email: string;
+            access_token: string;
+            email_reminders_enabled: boolean | null;
+          }[]
         | null;
       const value = Array.isArray(participant) ? participant[0] : participant;
       if (!value) {
@@ -242,10 +258,21 @@ export async function getSessionRegisteredWithEmail(sessionId: string) {
         firstName: value.first_name,
         lastName: value.last_name,
         email: value.email,
+        accessToken: value.access_token,
+        emailRemindersEnabled: value.email_reminders_enabled !== false,
       };
     })
     .filter(
-      (value): value is { id: string; firstName: string; lastName: string; email: string } => value !== null,
+      (
+        value,
+      ): value is {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        accessToken: string;
+        emailRemindersEnabled: boolean;
+      } => value !== null,
     )
     .sort((a, b) => a.firstName.localeCompare(b.firstName, "fr"));
 }
@@ -285,6 +312,7 @@ export async function notifySessionNotMaintained(
       status,
       theme: session.theme,
       notes: session.notes,
+      accessToken: participant.accessToken,
     });
     sent += 1;
   }
@@ -449,11 +477,27 @@ export async function createParticipant(input: {
 
 export async function registerParticipant(sessionId: string, participantId: string) {
   const supabase = getSupabaseAdmin();
+  const { data: existing, error: lookupError } = await supabase
+    .from("ppg_registrations")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("participant_id", participantId)
+    .maybeSingle();
+  if (lookupError) {
+    throw lookupError;
+  }
+  if (existing) {
+    return;
+  }
+
   const { error } = await supabase.from("ppg_registrations").insert({
     session_id: sessionId,
     participant_id: participantId,
   });
   if (error) {
+    if (error.code === "23505") {
+      return;
+    }
     throw error;
   }
 }
@@ -550,6 +594,7 @@ export async function searchParticipants(query: string) {
       id: participant.id,
       firstName: participant.firstName,
       lastName: participant.lastName,
+      email: participant.email,
     }));
 }
 
@@ -1063,6 +1108,71 @@ export async function getMonthBillingPreview(year: number, monthIndex: number): 
   };
 }
 
+function buildValidationSnapshots(
+  preview: MonthBillingPreview,
+  sessionStatuses: Array<{
+    sessionId: string;
+    accountingStatus: BillingAccountingStatus;
+    comment?: string | null;
+  }>,
+) {
+  const statusBySessionId = Object.fromEntries(
+    sessionStatuses.map((item) => [item.sessionId, item.accountingStatus]),
+  ) as Record<string, BillingAccountingStatus>;
+
+  const commentBySessionId = Object.fromEntries(
+    sessionStatuses.map((item) => [item.sessionId, item.comment?.trim() ?? ""]),
+  ) as Record<string, string>;
+
+  const allSnapshots = preview.sessions.map((row) => {
+    const accountingStatus = statusBySessionId[row.id] ?? row.suggestedAccountingStatus;
+    return buildSessionSnapshot(row, accountingStatus, commentBySessionId[row.id] ?? null);
+  });
+
+  const billableSnapshots = billableSnapshotsFromRows(preview.sessions, statusBySessionId, commentBySessionId);
+  const computedSessionCount = countBillableSessions(
+    preview.sessions.map((row) => statusBySessionId[row.id] ?? row.suggestedAccountingStatus),
+  );
+
+  return { allSnapshots, billableSnapshots, computedSessionCount };
+}
+
+export async function buildMonthBillingPdfPreview(input: {
+  year: number;
+  monthIndex: number;
+  billedSessionCount: number;
+  billingNote?: string | null;
+  sessionStatuses: Array<{
+    sessionId: string;
+    accountingStatus: BillingAccountingStatus;
+    comment?: string | null;
+  }>;
+}) {
+  const preview = await getMonthBillingPreview(input.year, input.monthIndex);
+  const { allSnapshots, billableSnapshots, computedSessionCount } = buildValidationSnapshots(
+    preview,
+    input.sessionStatuses,
+  );
+  const month = input.monthIndex + 1;
+  const { buildBillingValidationPdf } = await import("@/lib/billing-export-pdf");
+  const pdfBytes = await buildBillingValidationPdf({
+    season: preview.season,
+    monthLabel: preview.monthLabel,
+    computedSessionCount,
+    billedSessionCount: input.billedSessionCount,
+    billingNote: input.billingNote?.trim() || null,
+    realizedSessions: billableSnapshots,
+    allSessions: allSnapshots,
+  });
+
+  return {
+    pdfBytes,
+    filename: `ppg-facturation-apercu-${input.year}-${String(month).padStart(2, "0")}.pdf`,
+    preview,
+    computedSessionCount,
+  };
+}
+
 export async function saveAndSendMonthValidation(input: {
   year: number;
   monthIndex: number;
@@ -1092,14 +1202,9 @@ export async function saveAndSendMonthValidation(input: {
     input.sessionStatuses.map((item) => [item.sessionId, item.comment?.trim() ?? ""]),
   ) as Record<string, string>;
 
-  const allSnapshots = preview.sessions.map((row) => {
-    const accountingStatus = statusBySessionId[row.id] ?? row.suggestedAccountingStatus;
-    return buildSessionSnapshot(row, accountingStatus, commentBySessionId[row.id] ?? null);
-  });
-
-  const billableSnapshots = billableSnapshotsFromRows(preview.sessions, statusBySessionId, commentBySessionId);
-  const computedSessionCount = countBillableSessions(
-    preview.sessions.map((row) => statusBySessionId[row.id] ?? row.suggestedAccountingStatus),
+  const { allSnapshots, billableSnapshots, computedSessionCount } = buildValidationSnapshots(
+    preview,
+    input.sessionStatuses,
   );
 
   const month = input.monthIndex + 1;
@@ -1300,5 +1405,206 @@ export async function seedDefaultBillingEmails() {
       // already exists
     }
   }
+}
+
+export type AdminUpcomingSession = {
+  id: string;
+  sessionDate: string;
+  theme: string | null;
+  registrationCount: number;
+  participants: Array<{ id: string; firstName: string; lastName: string }>;
+};
+
+export async function getAdminUpcomingSession(
+  season: Season,
+  sessions: Session[],
+): Promise<AdminUpcomingSession | null> {
+  const upcoming =
+    [...sessions]
+      .filter((session) => session.status === "scheduled" && !isSessionPast(session.sessionDate, season.endTime))
+      .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate))[0] ?? null;
+  if (!upcoming) {
+    return null;
+  }
+  const participants = await getSessionParticipants(upcoming.id);
+  return {
+    id: upcoming.id,
+    sessionDate: upcoming.sessionDate,
+    theme: upcoming.theme,
+    registrationCount: participants.length,
+    participants,
+  };
+}
+
+export async function setEmailRemindersEnabled(accessToken: string, enabled: boolean) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_participants")
+    .update({ email_reminders_enabled: enabled })
+    .eq("access_token", accessToken)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return data ? mapParticipant(data) : null;
+}
+
+async function wasSessionReminderSent(sessionId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_session_reminders")
+    .select("id")
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  return Boolean(data);
+}
+
+async function markSessionReminderSent(sessionId: string) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("ppg_session_reminders").upsert(
+    {
+      session_id: sessionId,
+      sent_at: new Date().toISOString(),
+    },
+    { onConflict: "session_id" },
+  );
+  if (error) {
+    throw error;
+  }
+}
+
+function getParisTomorrowKey() {
+  const parisNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Paris" }));
+  const tomorrow = new Date(parisNow);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+}
+
+export async function maybeSendSessionReminders() {
+  const season = await getActiveSeason();
+  if (!season || !process.env.BREVO_API_KEY) {
+    return { sent: 0, reason: "NOT_CONFIGURED" as const };
+  }
+
+  const tomorrowKey = getParisTomorrowKey();
+  const sessions = await getSessionsForSeason(season.id);
+  const target = sessions.find((session) => session.sessionDate === tomorrowKey && session.status === "scheduled");
+  if (!target) {
+    return { sent: 0, reason: "NO_SESSION_TOMORROW" as const };
+  }
+
+  if (await wasSessionReminderSent(target.id)) {
+    return { sent: 0, reason: "ALREADY_SENT" as const };
+  }
+
+  const participants = (await getSessionRegisteredWithEmail(target.id)).filter(
+    (participant) => participant.emailRemindersEnabled,
+  );
+  if (participants.length === 0) {
+    await markSessionReminderSent(target.id);
+    return { sent: 0, reason: "NO_RECIPIENTS" as const };
+  }
+
+  const { sendSessionReminderEmail } = await import("@/lib/email");
+  const { formatParisDate, formatTimeLabel } = await import("@/lib/calendar");
+  const dateLabel = formatParisDate(target.sessionDate);
+  const timeLabel = `${formatTimeLabel(season.startTime)}-${formatTimeLabel(season.endTime)}`;
+
+  let sent = 0;
+  for (const participant of participants) {
+    await sendSessionReminderEmail({
+      to: participant.email,
+      firstName: participant.firstName,
+      sessionDateLabel: dateLabel,
+      timeLabel,
+      location: season.location,
+      theme: target.theme,
+      accessToken: participant.accessToken,
+      sessionId: target.id,
+    });
+    sent += 1;
+  }
+
+  await markSessionReminderSent(target.id);
+  return { sent, sessionDate: target.sessionDate };
+}
+
+export async function getLatestMonthValidation(seasonId: string) {
+  const validations = await listMonthValidations(seasonId);
+  return (
+    [...validations]
+      .filter((validation) => validation.lastSentAt)
+      .sort((a, b) => {
+        if (b.year !== a.year) {
+          return b.year - a.year;
+        }
+        return b.month - a.month;
+      })[0] ?? null
+  );
+}
+
+export async function getMonthPresenceExport(year: number, monthIndex: number) {
+  const report = await getMonthRegistrationsReport(year, monthIndex);
+  const sessionIds = report.sessions.map((session) => session.id);
+  if (sessionIds.length === 0) {
+    return { monthLabel: report.monthLabel, rows: [] as Array<{
+      sessionDate: string;
+      firstName: string;
+      lastName: string;
+      registeredOnline: boolean;
+      attendanceStatus: Attendance["status"] | null;
+    }> };
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: attendanceRows, error } = await supabase
+    .from("ppg_attendance")
+    .select("session_id, participant_id, status")
+    .in("session_id", sessionIds);
+  if (error) {
+    throw error;
+  }
+
+  const attendanceBySession = new Map<string, Map<string, Attendance["status"]>>();
+  for (const row of attendanceRows ?? []) {
+    const map = attendanceBySession.get(row.session_id) ?? new Map<string, Attendance["status"]>();
+    map.set(row.participant_id, row.status as Attendance["status"]);
+    attendanceBySession.set(row.session_id, map);
+  }
+
+  const rows: Array<{
+    sessionDate: string;
+    firstName: string;
+    lastName: string;
+    registeredOnline: boolean;
+    attendanceStatus: Attendance["status"] | null;
+  }> = [];
+
+  for (const session of report.sessions) {
+    const attendanceMap = attendanceBySession.get(session.id) ?? new Map<string, Attendance["status"]>();
+    for (const participant of session.participants ?? []) {
+      rows.push({
+        sessionDate: session.sessionDate,
+        firstName: participant.firstName,
+        lastName: participant.lastName,
+        registeredOnline: true,
+        attendanceStatus: attendanceMap.get(participant.id) ?? null,
+      });
+    }
+  }
+
+  rows.sort((a, b) => a.sessionDate.localeCompare(b.sessionDate) || a.firstName.localeCompare(b.firstName, "fr"));
+
+  return { monthLabel: report.monthLabel, rows };
+}
+
+export async function runDailyCronTasks() {
+  const sessionReminders = await maybeSendSessionReminders();
+  const validationReminder = await maybeSendMonthValidationReminder();
+  return { sessionReminders, validationReminder };
 }
 

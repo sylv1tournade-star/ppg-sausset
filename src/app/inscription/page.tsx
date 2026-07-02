@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { CLUB_MEMBERSHIP_URL } from "@/lib/constants";
+import { CLUB_MEMBERSHIP_URL, PPG_LICENSE_MESSAGE } from "@/lib/constants";
 
 export default function InscriptionPage() {
   const router = useRouter();
@@ -85,10 +85,11 @@ export default function InscriptionPage() {
           </div>
         ) : notMember ? (
           <div className="mt-6 space-y-4 rounded-xl bg-[#fff3cd] p-4 text-[#664d03]">
-            <p className="font-semibold">Adhésion non trouvée</p>
+            <p className="font-semibold">Option PPG non souscrite</p>
+            <p className="text-sm">{PPG_LICENSE_MESSAGE}</p>
             <p className="text-sm">
-              Votre nom n&apos;apparaît pas dans la liste des membres à jour. Pour participer au PPG, il faut d&apos;abord
-              adhérer au club Courir à Sausset.
+              Pour participer aux séances PPG, reprenez votre licence en cochant l&apos;option PPG, ou contactez le
+              club.
             </p>
             <a href={CLUB_MEMBERSHIP_URL} className="btn btn-primary" target="_blank" rel="noreferrer">
               Adhérer au club

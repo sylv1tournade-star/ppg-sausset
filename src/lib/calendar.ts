@@ -283,6 +283,20 @@ export function findNextOpenSession<T extends { sessionDate: string; status: str
   );
 }
 
+export function findNextOpenSessionNotRegistered<
+  T extends { sessionDate: string; status: string; isRegistered?: boolean },
+>(sessions: T[], season: { endTime: string }) {
+  return (
+    [...sessions]
+      .filter((session) => isSessionRegisterable(session, season) && !session.isRegistered)
+      .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate))[0] ?? null
+  );
+}
+
+export function getCurrentAgendaMonthKey(sessionDates: string[]) {
+  return pickAgendaMonthKey(sessionDates);
+}
+
 export function formatTimeLabel(time: string) {
   return time.slice(0, 5).replace(":", "h");
 }

@@ -3,8 +3,26 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminSessionAgenda } from "@/components/admin-session-agenda";
+import { ManonUpcomingPanel } from "@/components/manon-upcoming-panel";
 import { formatDayOfWeekLongCapitalized, formatMonthYear, formatParisShortDate, formatSeasonScheduleTagline, parseMonthKey, pickAgendaMonthKey } from "@/lib/calendar";
-import type { Attendance, BureauStats, Season, Session } from "@/lib/types";
+import type { Attendance, BureauStats, MonthValidation, Season, Session } from "@/lib/types";
+
+type AdminSession = Session & { registrationCount?: number };
+
+type UpcomingSessionSummary = {
+  id: string;
+  sessionDate: string;
+  theme: string | null;
+  registrationCount: number;
+  participants: Array<{ id: string; firstName: string; lastName: string }>;
+};
+
+type SearchResult = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+};
 
 type ParticipantRow = {
   id: string;
@@ -21,7 +39,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [season, setSeason] = useState<Season | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<AdminSession[]>([]);
+  const [adminTab, setAdminTab] = useState<"seances" | "presence">("seances");
   const [stats, setStats] = useState<BureauStats | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<ParticipantRow[]>([]);
@@ -35,7 +54,13 @@ export default function AdminPage() {
   const [location, setLocation] = useState("Sausset-les-Pins");
   const [busy, setBusy] = useState(false);
   const [exportingMonth, setExportingMonth] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
   const [superAdminConfigured, setSuperAdminConfigured] = useState(true);
+  const [upcomingSession, setUpcomingSession] = useState<UpcomingSessionSummary | null>(null);
+  const [latestValidation, setLatestValidation] = useState<MonthValidation | null>(null);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSearchResults, setMemberSearchResults] = useState<SearchResult[]>([]);
+  const [searchBusy, setSearchBusy] = useState(false);
 
   const seasonMonthKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -63,6 +88,8 @@ export default function AdminPage() {
     const statsData = statsResponse ? await statsResponse.json() : { stats: null };
     setSeason(mainData.season ?? null);
     setSessions(mainData.sessions ?? []);
+    setUpcomingSession(mainData.upcomingSession ?? null);
+    setLatestValidation(mainData.latestValidation ?? null);
     setStats(statsData.stats ?? null);
   }
 
@@ -236,27 +263,48 @@ export default function AdminPage() {
     }
   }
 
-  async function downloadMonthPdf(monthKey: string) {
+  async function downloadMonthExport(monthKey: string, format: "pdf" | "csv" | "csv-presence") {
     const { year, month } = parseMonthKey(monthKey);
+    const exportKey = `${monthKey}-${format}`;
     setExportingMonth(monthKey);
+    setExportingFormat(exportKey);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/export-month?year=${year}&month=${month + 1}`);
+      const response = await fetch(`/api/admin/export-month?year=${year}&month=${month + 1}&format=${format}`);
       if (!response.ok) {
         const data = (await response.json()) as { error?: string };
-        throw new Error(data.error ?? "Impossible de générer le PDF.");
+        throw new Error(data.error ?? "Impossible de générer le fichier.");
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `ppg-inscriptions-${monthKey}.pdf`;
+      const ext = format === "pdf" ? "pdf" : "csv";
+      const suffix = format === "csv-presence" ? "presences" : "inscriptions";
+      anchor.download = `ppg-${suffix}-${monthKey}.${ext}`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (exportError) {
       setError(exportError instanceof Error ? exportError.message : "Erreur");
     } finally {
       setExportingMonth(null);
+      setExportingFormat(null);
+    }
+  }
+
+  async function runMemberSearch() {
+    const query = memberSearch.trim();
+    if (query.length < 2) {
+      setMemberSearchResults([]);
+      return;
+    }
+    setSearchBusy(true);
+    try {
+      const response = await fetch(`/api/admin?action=search&q=${encodeURIComponent(query)}`);
+      const data = await response.json();
+      setMemberSearchResults(data.results ?? []);
+    } finally {
+      setSearchBusy(false);
     }
   }
 
@@ -303,9 +351,10 @@ export default function AdminPage() {
     const full = `${participant.firstName} ${participant.lastName}`.toLowerCase();
     return full.includes(attendanceQuery);
   });
+  const presentCount = attendance.filter((record) => record.status === "present").length;
 
   return (
-    <div className="container space-y-6">
+    <div className={`container space-y-6 ${!isSuperAdmin ? "admin-manon-mobile" : ""}`}>
       <section className="card p-6">
         <h1 className="text-2xl font-bold">{isSuperAdmin ? "Administration PPG" : "Séances PPG — Manon"}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -318,6 +367,16 @@ export default function AdminPage() {
             Se déconnecter
           </button>
         </div>
+        {isSuperAdmin && latestValidation?.lastSentAt ? (
+          <p className="mt-3 rounded-lg bg-[var(--accent-soft)] px-3 py-2 text-sm">
+            Dernière validation :{" "}
+            <strong>
+              {formatMonthYear(latestValidation.year, latestValidation.month - 1)}
+            </strong>{" "}
+            · envoyée {latestValidation.sendCount} fois ·{" "}
+            {new Date(latestValidation.lastSentAt).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris" })}
+          </p>
+        ) : null}
         {isSuperAdmin ? (
           season ? (
             <p className="muted mt-2">
@@ -385,7 +444,80 @@ export default function AdminPage() {
         {notice ? <p className="mt-3 text-sm text-[var(--accent)]">{notice}</p> : null}
       </section>
 
+      {!isSuperAdmin && season && upcomingSession ? (
+        <ManonUpcomingPanel
+          sessionId={upcomingSession.id}
+          sessionDate={upcomingSession.sessionDate}
+          theme={upcomingSession.theme}
+          registrationCount={upcomingSession.registrationCount}
+          participants={upcomingSession.participants}
+          startTime={season.startTime}
+          endTime={season.endTime}
+          location={season.location}
+        />
+      ) : null}
+
+      {isSuperAdmin ? (
+        <section className="card p-6">
+          <h2 className="text-xl font-bold">Recherche adhérent</h2>
+          <p className="muted mt-1 text-sm">Nom, prénom ou e-mail (2 caractères minimum).</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <input
+              className="input min-w-[14rem] flex-1"
+              placeholder="Ex. : Dupont ou marina@"
+              value={memberSearch}
+              onChange={(event) => setMemberSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void runMemberSearch();
+                }
+              }}
+            />
+            <button type="button" className="btn btn-primary" disabled={searchBusy} onClick={() => void runMemberSearch()}>
+              {searchBusy ? "..." : "Rechercher"}
+            </button>
+          </div>
+          {memberSearchResults.length > 0 ? (
+            <ul className="mt-4 space-y-2">
+              {memberSearchResults.map((result) => (
+                <li key={result.id} className="rounded-xl border border-[var(--border)] px-3 py-2 text-sm">
+                  <strong>
+                    {result.firstName} {result.lastName}
+                  </strong>
+                  <span className="muted block">{result.email}</span>
+                </li>
+              ))}
+            </ul>
+          ) : memberSearch.trim().length >= 2 && !searchBusy ? (
+            <p className="muted mt-3 text-sm">Aucun profil trouvé.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="space-y-6">
+        {isSuperAdmin ? (
+          <div className="flex flex-wrap gap-2 border-b border-[var(--border)] pb-3">
+            <button
+              type="button"
+              className={adminTab === "seances" ? "btn btn-primary text-sm" : "btn btn-secondary text-sm"}
+              onClick={() => setAdminTab("seances")}
+            >
+              Séances
+            </button>
+            <button
+              type="button"
+              className={adminTab === "presence" ? "btn btn-primary text-sm" : "btn btn-secondary text-sm"}
+              onClick={() => setAdminTab("presence")}
+            >
+              Présence
+            </button>
+            <Link href="/admin/facturation" className="btn btn-secondary text-sm">
+              Facturation
+            </Link>
+          </div>
+        ) : null}
+
+        {(adminTab === "seances" || !isSuperAdmin) ? (
         <div className="card p-6">
           <h2 className="text-xl font-bold">Séances — agenda</h2>
           {!season ? (
@@ -398,20 +530,33 @@ export default function AdminPage() {
                 selectedSessionId={selectedSessionId}
                 onSelectSession={setSelectedSessionId}
                 onUpdateSession={updateSession}
+                showFilters={isSuperAdmin}
               />
             </div>
           )}
         </div>
+        ) : null}
 
-        {isSuperAdmin ? (
-        <div className="card p-6">
+        {isSuperAdmin && adminTab === "presence" ? (
+        <div className="card presence-contrast-panel p-6">
           <h2 className="text-xl font-bold">Présence le soir de la séance</h2>
           <p className="muted mt-1 text-sm">
-            Marquez qui est venu sur place. Les inscriptions en ligne apparaissent ici une fois la séance sélectionnée
-            dans l&apos;agenda.
+            Marquez qui est venu sur place. Choisissez la date dans l&apos;agenda ci-dessous.
           </p>
+          {season ? (
+            <div className="mt-4">
+              <AdminSessionAgenda
+                season={season}
+                sessions={sessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={setSelectedSessionId}
+                onUpdateSession={updateSession}
+                compact
+              />
+            </div>
+          ) : null}
           {!selectedSession ? (
-            <p className="muted mt-3 text-sm">Sélectionnez une date dans l&apos;agenda ci-dessus.</p>
+            <p className="muted mt-3 text-sm">Sélectionnez une date dans l&apos;agenda.</p>
           ) : participants.length === 0 && addableParticipants.length === 0 ? (
             <>
               <p className="mt-2 font-medium">{formatParisShortDate(selectedSession.sessionDate)}</p>
@@ -420,13 +565,11 @@ export default function AdminPage() {
           ) : (
             <>
               <p className="mt-2 font-medium">{formatParisShortDate(selectedSession.sessionDate)}</p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <input
-                  className="input min-w-[12rem] flex-1"
-                  placeholder="Rechercher un inscrit"
-                  value={attendanceSearch}
-                  onChange={(event) => setAttendanceSearch(event.target.value)}
-                />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--accent-soft)] px-4 py-3">
+                <p className="text-sm">
+                  <strong>{presentCount}</strong> / {participants.length} marqué(s) présent
+                  {participants.length > 0 ? ` · ${Math.round((presentCount / participants.length) * 100)}%` : ""}
+                </p>
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -435,6 +578,14 @@ export default function AdminPage() {
                 >
                   Tout marquer présent
                 </button>
+              </div>
+              <div className="mt-4">
+                <input
+                  className="input w-full"
+                  placeholder="Rechercher un inscrit"
+                  value={attendanceSearch}
+                  onChange={(event) => setAttendanceSearch(event.target.value)}
+                />
               </div>
               <ul className="mt-4 space-y-2">
                 {filteredParticipants.length === 0 ? (
@@ -574,14 +725,32 @@ export default function AdminPage() {
                       {monthSessions.length} séance{monthSessions.length > 1 ? "s" : ""}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={Boolean(exportingMonth)}
-                    onClick={() => downloadMonthPdf(monthKey)}
-                  >
-                    {isExporting ? "Génération…" : "Édition PDF"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-secondary text-sm"
+                      disabled={Boolean(exportingMonth)}
+                      onClick={() => downloadMonthExport(monthKey, "pdf")}
+                    >
+                      {exportingFormat === `${monthKey}-pdf` ? "…" : "PDF inscriptions"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary text-sm"
+                      disabled={Boolean(exportingMonth)}
+                      onClick={() => downloadMonthExport(monthKey, "csv")}
+                    >
+                      {exportingFormat === `${monthKey}-csv` ? "…" : "CSV inscriptions"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary text-sm"
+                      disabled={Boolean(exportingMonth)}
+                      onClick={() => downloadMonthExport(monthKey, "csv-presence")}
+                    >
+                      {exportingFormat === `${monthKey}-csv-presence` ? "…" : "CSV présences"}
+                    </button>
+                  </div>
                 </li>
               );
             })}

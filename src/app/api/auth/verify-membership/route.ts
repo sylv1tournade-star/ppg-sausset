@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CLUB_MEMBERSHIP_URL } from "@/lib/constants";
+import { CLUB_MEMBERSHIP_URL, PPG_LICENSE_MESSAGE } from "@/lib/constants";
 import { isPaidMemberForActiveSeason } from "@/lib/server-data";
 import { isSupabaseConfigured } from "@/lib/supabase";
 
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       eligible: false,
       code: "NOT_PAID_MEMBER",
-      message: "Votre adhésion au club n'a pas été trouvée.",
+      message: PPG_LICENSE_MESSAGE,
       membershipUrl: CLUB_MEMBERSHIP_URL,
     });
   }

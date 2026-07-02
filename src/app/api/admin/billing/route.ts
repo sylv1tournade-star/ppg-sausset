@@ -3,6 +3,7 @@ import { isSuperAdminAuthenticated } from "@/lib/auth";
 import { isBrevoConfigured } from "@/lib/email";
 import {
   addBillingRecipient,
+  buildMonthBillingPdfPreview,
   clearPaidMembers,
   getActiveSeason,
   getMonthBillingPreview,
@@ -159,6 +160,43 @@ export async function POST(request: Request) {
     }
     await clearPaidMembers(season.id);
     return NextResponse.json({ count: 0, members: [] });
+  }
+
+  if (action === "preview.pdf") {
+    const year = Number(body.year);
+    const month = Number(body.month);
+    const billedSessionCount = Number(body.billedSessionCount);
+    const billingNote = body.billingNote ? String(body.billingNote) : null;
+    const sessionStatuses = Array.isArray(body.sessionStatuses)
+      ? (body.sessionStatuses as Array<{ sessionId: string; accountingStatus: BillingAccountingStatus; comment?: string }>)
+      : [];
+
+    if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+      return NextResponse.json({ error: "Année ou mois invalide." }, { status: 400 });
+    }
+
+    try {
+      const result = await buildMonthBillingPdfPreview({
+        year,
+        monthIndex: month - 1,
+        billedSessionCount,
+        billingNote,
+        sessionStatuses,
+      });
+      return new Response(Buffer.from(result.pdfBytes), {
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="${result.filename}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur";
+      if (message === "NO_SEASON") {
+        return NextResponse.json({ error: "Aucune saison active." }, { status: 400 });
+      }
+      throw error;
+    }
   }
 
   if (action === "send") {
