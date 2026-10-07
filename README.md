@@ -44,7 +44,20 @@ Copier `.env.local.example` → `.env.local`, puis renseigner les clés depuis
 | `BREVO_SENDER_EMAIL` | E-mail expéditeur vérifié dans Brevo |
 | `BREVO_SENDER_NAME` | Nom affiché (ex. `PPG Courir à Sausset`) |
 | `CRON_SECRET` | Secret pour le rappel automatique (cron Vercel) |
+| `PPG_CAS_SYNC_SECRET` | Secret partagé avec cas-sites (sync adhésions PPG payées) |
 | `NEXT_PUBLIC_APP_URL` | URL publique (liens personnels) |
+
+## Sync depuis le site club (cas-sites)
+
+Quand une adhésion native avec option PPG est marquée **payée** sur le site club, cas-sites appelle :
+
+`POST /api/integrations/cas-sites/ppg-member`
+
+- Header : `Authorization: Bearer <PPG_CAS_SYNC_SECRET>`
+- Body : `{ "firstName", "lastName", "email", "createAccessProfile?" }`
+- Effet : upsert `ppg_paid_members` + création du profil participant (lien `/m/[token]`) si besoin
+
+Poser le **même** secret sur Vercel PPG et Vercel cas-sites (`PPG_CAS_SYNC_SECRET`). Sur cas-sites, optionnel : `PPG_APP_URL=https://ppg.courirasausset.com`.
 
 ## Facturation (Suzanne)
 

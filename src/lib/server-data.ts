@@ -1,3 +1,4 @@
+import { generateAccessToken } from "@/lib/auth";
 import { formatMonthYear, formatParisDate, getThursdayDatesForSeason, isSessionPast, seasonLabelFromStartYear, toMonthKey } from "@/lib/calendar";
 import {
   computeRanking,
@@ -549,10 +550,14 @@ export async function getAttendanceForSession(sessionId: string) {
   }));
 }
 
-export async function getRanking(limit = 10): Promise<RankingEntry[]> {
+export async function getRanking(limit = 10): Promise<{
+  entries: RankingEntry[];
+  hasAttendanceData: boolean;
+  pastSessionCount: number;
+}> {
   const season = await getActiveSeason();
   if (!season) {
-    return [];
+    return { entries: [], hasAttendanceData: false, pastSessionCount: 0 };
   }
 
   const [sessions, participants, registrations, attendance] = await Promise.all([
@@ -562,19 +567,23 @@ export async function getRanking(limit = 10): Promise<RankingEntry[]> {
     getAttendanceForSeason(season.id),
   ]);
 
-  const pastSessionIds = new Set(
-    sessions
-      .filter((session) => isSessionPast(session.sessionDate, season.endTime))
-      .map((session) => session.id),
+  const pastSessions = sessions.filter((session) => isSessionPast(session.sessionDate, season.endTime));
+  const pastSessionIds = new Set(pastSessions.map((session) => session.id));
+  const hasAttendanceData = attendance.some(
+    (record) => pastSessionIds.has(record.sessionId) && record.status === "present",
   );
 
-  return computeRanking({
-    participants,
-    registrations,
-    attendance,
-    pastSessionIds,
-    minSessions: 3,
-  }).slice(0, limit);
+  return {
+    entries: computeRanking({
+      participants,
+      registrations,
+      attendance,
+      pastSessionIds,
+      minSessions: 3,
+    }).slice(0, limit),
+    hasAttendanceData,
+    pastSessionCount: pastSessions.length,
+  };
 }
 
 export async function searchParticipants(query: string) {
@@ -817,7 +826,7 @@ export async function isPaidMemberForActiveSeason(firstName: string, lastName: s
   };
 }
 
-export async function importPaidMembers(seasonId: string, raw: string, mode: "replace" | "merge" = "replace") {
+export async function importPaidMembers(seasonId: string, raw: string, mode: "replace" | "merge" = "merge") {
   const supabase = getSupabaseAdmin();
   const parsed = parsePaidMembersImport(raw);
 
@@ -857,6 +866,101 @@ export async function clearPaidMembers(seasonId: string) {
   if (error) {
     throw error;
   }
+}
+
+export async function removePaidMember(seasonId: string, memberId: string) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("ppg_paid_members")
+    .delete()
+    .eq("id", memberId)
+    .eq("season_id", seasonId)
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  if (!data) {
+    throw new Error("MEMBER_NOT_FOUND");
+  }
+}
+
+/**
+ * Sync depuis cas-sites : ajoute l’adhérent à la liste payante
+ * et crée (ou réutilise) le profil participant + lien /m/[token].
+ */
+export async function upsertPaidMemberFromCasSites(input: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  createAccessProfile?: boolean;
+}): Promise<{
+  seasonId: string;
+  paidMemberKey: string;
+  participant: Participant | null;
+  createdParticipant: boolean;
+}> {
+  const season = await getActiveSeason();
+  if (!season) {
+    throw new Error("NO_ACTIVE_SEASON");
+  }
+
+  const firstName = input.firstName.trim();
+  const lastName = input.lastName.trim();
+  const email = normalizeEmail(input.email);
+  if (!firstName || !lastName || !email) {
+    throw new Error("INVALID_MEMBER");
+  }
+
+  const normalizedKey = memberKey(firstName, lastName);
+  const supabase = getSupabaseAdmin();
+  const { error: paidError } = await supabase.from("ppg_paid_members").upsert(
+    {
+      season_id: season.id,
+      first_name: firstName,
+      last_name: lastName,
+      normalized_key: normalizedKey,
+    },
+    { onConflict: "season_id,normalized_key" },
+  );
+  if (paidError) {
+    throw paidError;
+  }
+
+  const createAccess = input.createAccessProfile !== false;
+  if (!createAccess) {
+    return {
+      seasonId: season.id,
+      paidMemberKey: normalizedKey,
+      participant: null,
+      createdParticipant: false,
+    };
+  }
+
+  const existing = await getParticipantByEmail(email);
+  if (existing) {
+    // Même e-mail déjà connu : on ne change pas le nom (foyer multi-PPG).
+    return {
+      seasonId: season.id,
+      paidMemberKey: normalizedKey,
+      participant: existing,
+      createdParticipant: false,
+    };
+  }
+
+  const accessToken = generateAccessToken();
+  const participant = await createParticipant({
+    firstName,
+    lastName,
+    email,
+    accessToken,
+  });
+  return {
+    seasonId: season.id,
+    paidMemberKey: normalizedKey,
+    participant,
+    createdParticipant: true,
+  };
 }
 
 export async function getMonthRegistrationsReport(year: number, monthIndex: number) {
@@ -1249,10 +1353,22 @@ export async function saveAndSendMonthValidation(input: {
 
   if (input.sendEmail) {
     const recipients = await listBillingRecipients();
-    const to = recipients.filter((item) => item.recipientType === "treasurer").map((item) => item.email);
-    const cc = recipients
-      .filter((item) => item.recipientType === "coach" || item.recipientType === "billing_manager")
-      .map((item) => item.email);
+    const to = [
+      ...new Set(
+        recipients
+          .filter((item) => item.recipientType === "treasurer")
+          .map((item) => item.email.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    ];
+    const cc = [
+      ...new Set(
+        recipients
+          .filter((item) => item.recipientType === "coach" || item.recipientType === "billing_manager")
+          .map((item) => item.email.trim().toLowerCase())
+          .filter((email) => email && !to.includes(email)),
+      ),
+    ];
 
     if (to.length === 0) {
       throw new Error("NO_TREASURERS");
@@ -1523,6 +1639,7 @@ export async function maybeSendSessionReminders() {
       timeLabel,
       location: season.location,
       theme: target.theme,
+      notes: target.notes,
       accessToken: participant.accessToken,
       sessionId: target.id,
     });
